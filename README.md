@@ -1,8 +1,8 @@
 
 <h2>
   Tabularium - markdown document assembly
-  <a href="https://crates.io/crates/gateryx"><img alt="crates.io page" src="https://img.shields.io/crates/v/gateryx.svg"></img></a>
-  <a href="https://docs.rs/gateryx"><img alt="docs.rs page" src="https://docs.rs/gateryx/badge.svg"></img></a>
+  <a href="https://crates.io/crates/tabularium"><img alt="crates.io page" src="https://img.shields.io/crates/v/tabularium.svg"></img></a>
+  <a href="https://docs.rs/tabularium"><img alt="docs.rs page" src="https://docs.rs/tabularium/badge.svg"></img></a>
 </h2>
 
 
