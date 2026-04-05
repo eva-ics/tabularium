@@ -1,0 +1,99 @@
+@use "../../styles/tokens" as *;
+
+.wrap {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.pathRow {
+  font-size: 0.8rem;
+  color: $text-muted;
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid $border;
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+.resultsHeading {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: $text;
+  font-family: ui-monospace, monospace;
+  font-size: 0.82rem;
+}
+
+.list {
+  flex: 1;
+  overflow: auto;
+  margin: 0;
+  padding: 0.25rem 0;
+  list-style: none;
+}
+
+.row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.35rem 0.6rem;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+
+  &:hover {
+    background: $bg-elevated;
+  }
+}
+
+.rowNav {
+  font-style: italic;
+}
+
+.rowSelected {
+  background: $bg-elevated;
+  border-left-color: $accent;
+}
+
+.rowFocused {
+  outline: 1px solid $accent-dim;
+  outline-offset: -1px;
+}
+
+.glyph {
+  font-size: 0.95rem;
+  min-width: 1.25rem;
+  text-align: center;
+  flex-shrink: 0;
+  user-select: none;
+  margin-top: 0.12rem;
+}
+
+.mainCol {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.path {
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+  color: $text;
+  word-break: break-all;
+}
+
+.score {
+  font-size: 0.72rem;
+  color: $text-muted;
+  font-family: ui-monospace, monospace;
+}
+
+.nameNav {
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+  color: $accent;
+}

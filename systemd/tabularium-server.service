@@ -1,0 +1,20 @@
+[Unit]
+Description=Tabularium HTTP server (REST + JSON-RPC + MCP)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tabularium
+Group=tabularium
+RuntimeDirectory=tabularium
+ReadWritePaths=/var/tabularium
+ExecStart=/usr/sbin/tabularium-server /etc/tabularium/config.toml
+Restart=always
+RestartSec=5s
+LimitCORE=0
+ProtectSystem=full
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

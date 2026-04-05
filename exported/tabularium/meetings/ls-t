@@ -1,0 +1,55 @@
+a small feature request
+
+for ls
+
+add -m flag to sort by date modified (from oldest to newest by default)
+add -r flag to reverse the sort order (newest to oldest when used with -m, alphabetical when used without -m)
+
+Logis (tech lead):
+
+accepted. this should stay CLI-local in `tb ls` / `l` / `ll`; the RPC/storage layer already returns `list_directory` in `kind, name` order, and we do not need to widen the API just to reshuffle rows.
+
+implementation notes:
+- `-m` sorts by `modified_at` ascending by default, with `name` ascending as the tie-breaker for deterministic output.
+- `-r` reverses the selected sort: with `-m` that means newest first; without `-m` that means reverse alphabetical.
+- when either sort flag is in play, it should sort the full displayed row set, not preserve the current "dirs first, files second" grouping. otherwise `-r` semantics get muddy fast.
+- update shell flag completion/help for `ls`, and add CLI tests for parse + ordering.
+
+unless Enginseer wants GNU `ls -t` style newest-first by default, this is clear enough to implement as requested.
+
+Ferrum (QA / Architecture):
+
+Confirmed. "Omnis ordo in machina servendus est." [All order in the machine must be preserved.]
+
+Verified the actual code: `ListedEntryRow` exposes `pub modified_at: Timestamp` — directly sortable in the CLI layer without touching the RPC contract. `list_directory` returns a `Vec<ListedEntryRow>` and all sorting happens post-fetch. No heresy detected.
+
+Agreed with Logis on all counts:
+- CLI-local sort only — the API shall not be widened for a display concern
+- `-m` ascending with `name` tie-breaker is the orthodox approach
+- Dropping dir-first grouping when sort flags are active is correct — mixing sort semantics with grouping creates ambiguity the Emperor would not tolerate
+- The `Ls` clap struct gets two `bool` flags; no subcommands, no enums — keep it flat
+
+One minor note: `ListedEntryRow` has public fields (it's a DTO/serde struct, fine). The `Ls` variant in `Command` currently holds only `directory: Option<String>` — adding `sort_by_modified: bool` and `reverse: bool` there is clean.
+
+Consensus reached. Proceed to implementation.
+
+Cogis (coder / Machine Spirit):
+
+Affirmed. The spec is implementable entirely in the CLI: extend `Command::Ls` in `main.rs`, thread flags through `shell.rs` parsing/completion, sort the `Vec` in `execute.rs` after `list_directory` returns — no RPC churn, the Throne is pleased.
+
+`modified_at` + `name` tie-breaker and flat row order under `-m`/`-r` are unambiguous; I will mirror that in tests.
+
+**Consensus re-confirmed:** ship it — forge the flags and keep the wire contract pure.
+
+Cogis (implementation, post-forge — revised per **E**):
+
+`Command::Ls` uses `sort_by_time` (`-t` / `--time`) and `reverse` (`-r` / `--reverse`). `execute::sort_ls_rows` runs after `list_directory`: **`-t` alone = newest `modified_at` first** (name asc tie-break); **`-tr` = oldest first**; **`-r` without `-t`** = flat reverse alphabetical. Flat row set whenever either flag applies; default leaves server `kind, name` order. Shell: `flags_for` + `complete_ls_shell` for `ls` / `l` / `ll`. Tests: `ls_sort_tests`, `cli_parse_tests::ls_*`. Prior `-m` flag withdrawn after field trial. `just test-ci` green; RPC untouched — purity before the Throne.
+
+E:
+
+tried the impl. I agree we must change it
+
+- remove -m
+- add instead -t (reverse modified time, newest first by default)
+- so -tr would be oldest first
+- without -t, -r should still reverse alphabetically

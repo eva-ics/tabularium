@@ -1,0 +1,168 @@
+@use "../../styles/tokens" as *;
+
+.wrap {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.pathRow {
+  font-size: 0.8rem;
+  color: $text-muted;
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid $border;
+  flex-shrink: 0;
+}
+
+$row-grid: [glyph] minmax(1.25rem, auto) [name] minmax(0, 1fr) [size]
+  minmax(4.5rem, auto) [modified] minmax(5.5rem, auto);
+
+.headerRow {
+  display: grid;
+  grid-template-columns: $row-grid;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.6rem 0.35rem;
+  border-bottom: 1px solid $border;
+  flex-shrink: 0;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: $text-muted;
+}
+
+.headerGlyph {
+  grid-column: glyph;
+}
+
+.headerCell {
+  margin: 0;
+  padding: 0.2rem 0;
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  text-transform: inherit;
+  letter-spacing: inherit;
+
+  &:nth-of-type(1) {
+    grid-column: name;
+  }
+
+  &:nth-of-type(2) {
+    grid-column: size;
+    text-align: right;
+  }
+
+  &:nth-of-type(3) {
+    grid-column: modified;
+    text-align: right;
+  }
+
+  &:hover {
+    color: $accent;
+  }
+}
+
+.list {
+  flex: 1;
+  overflow: auto;
+  margin: 0;
+  padding: 0.25rem 0;
+  list-style: none;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: $row-grid;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.35rem 0.6rem;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+
+  &:hover {
+    background: $bg-elevated;
+  }
+}
+
+.rowNav {
+  font-style: italic;
+  align-items: center;
+}
+
+.rowSelected {
+  background: $bg-elevated;
+  border-left-color: $accent;
+}
+
+.rowFocused {
+  outline: 1px solid $accent-dim;
+  outline-offset: -1px;
+}
+
+.glyph {
+  grid-column: glyph;
+  font-size: 0.95rem;
+  min-width: 1.25rem;
+  text-align: center;
+  flex-shrink: 0;
+  user-select: none;
+  margin-top: 0.12rem;
+}
+
+.nameBlock {
+  grid-column: name;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+}
+
+.name {
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+}
+
+.desc {
+  font-size: 0.7rem;
+  color: $text-muted;
+  font-family: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nameDir {
+  color: $dir-foreground;
+  font-weight: 500;
+}
+
+.nameFile {
+  color: $text;
+}
+
+.nameNav {
+  color: $accent;
+}
+
+.sizeCol {
+  grid-column: size;
+  font-size: 0.75rem;
+  color: $text-muted;
+  text-align: right;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.modCol {
+  grid-column: modified;
+  font-size: 0.75rem;
+  color: $text-muted;
+  text-align: right;
+  line-height: 1.25;
+  white-space: nowrap;
+}

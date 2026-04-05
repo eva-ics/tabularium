@@ -1,0 +1,36 @@
+[package]
+name = "tabularium-cli"
+version.workspace = true
+edition = "2024"
+license = "Apache-2.0"
+description = "tb — CLI for tabularium JSON-RPC"
+
+[[bin]]
+name = "tb"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+crossterm = { version = "0.28", features = ["bracketed-paste", "event-stream"] }
+filetime = "0.2"
+futures-util = "0.3"
+globset = "0.4"
+homedir = "0.3.6"
+ratatui = { version = "0.29", default-features = false, features = ["crossterm"] }
+regex = "1"
+rustyline = "17.0.1"
+shell-words = "1.1.1"
+tabularium = { path = "../tabularium", default-features = false, features = ["client"] }
+tempfile = "3"
+termimad = "0.34"
+terminal_size = "0.4"
+tokio = { version = "1", features = ["io-std", "io-util", "macros", "net", "rt", "signal", "time"] }
+tui-textarea = "0.7"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+axum = { version = "0.8", features = ["ws"] }
+bma-ts = "0.2.6"
+tabularium-server = { path = "../tabularium-server" }

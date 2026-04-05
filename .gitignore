@@ -1,0 +1,11 @@
+target
+make-deb/dist/
+.DS_Store
+# Local server config (copy from config.toml.example).
+config.toml
+/data/
+.venv/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+__pycache__

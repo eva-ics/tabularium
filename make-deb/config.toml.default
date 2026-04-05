@@ -1,0 +1,12 @@
+# Packaged default — copied to /etc/tabularium/config.toml on first install only.
+# Paths are absolute (systemd unit has no WorkingDirectory).
+
+[server]
+listen = "127.0.0.1:3050"
+database_path = "/var/tabularium/data/tabularium.db"
+index_dir = "/var/tabularium/data/tabularium.index"
+workers = 1
+timeout = 3600
+
+[mcp]
+listen = "127.0.0.1:3031"

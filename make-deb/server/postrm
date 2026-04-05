@@ -1,0 +1,16 @@
+#!/bin/sh
+set -e
+case "$1" in
+purge) ;;
+remove | abort-install | disappear) ;;
+upgrade | failed-upgrade | abort-upgrade) ;;
+esac
+if [ -x /bin/systemctl ] && [ -d /run/systemd/system ]; then
+    case "$1" in
+    purge | remove)
+        systemctl disable tabularium-server.service || true
+        ;;
+    esac
+    systemctl daemon-reload || true
+fi
+exit 0

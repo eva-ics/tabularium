@@ -1,0 +1,8 @@
+[workspace]
+resolver = "3"
+members = ["tabularium", "tabularium-server", "tabularium-cli"]
+
+[workspace.package]
+edition = "2024"
+license = "Apache-2.0"
+version = "0.1.2"

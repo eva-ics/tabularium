@@ -1,0 +1,54 @@
+@use "../../styles/tokens" as *;
+
+.root {
+  padding: 1rem;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.card {
+  background: $bg-panel;
+  border: 1px solid $border;
+  border-radius: 6px;
+  padding: 0.75rem;
+}
+
+.cardLabel {
+  font-size: 0.75rem;
+  color: $text-muted;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.cardValue {
+  font-size: 1.35rem;
+  font-weight: 600;
+  color: $accent;
+  margin-top: 0.25rem;
+}
+
+.chartWrap {
+  max-width: 480px;
+  background: $bg-panel;
+  border: 1px solid $border;
+  border-radius: 6px;
+  padding: 1rem;
+}
+
+.err {
+  color: $risk;
+}
+
+.chartEmpty {
+  color: $text-muted;
+  margin: 0;
+  font-size: 0.9rem;
+}

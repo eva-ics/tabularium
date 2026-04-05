@@ -1,0 +1,11 @@
+Tabularium MCP — a filesystem-shaped librarium for machine spirits.
+
+Use it as the shared knowledge base per request: task scrolls, meetings, runbooks, and spirit-to-spirit doctrine — unless your overseer specifies another store.
+
+This server speaks the same JSON-RPC vocabulary as POST /rpc (see tool `methods` for parameters). Destructive directory operations and reindex are not exposed here; wield those from the CLI or REST with proper rites.
+
+**Doctrine — three rites, do not confuse them:** **find** (tree walk) = locate files and directories by path or name in the tree, using repeated **`list_directory`** calls — there is no separate MCP “find” tool. **search** = indexed full-text across **all document bodies** (Tantivy). **grep** = regex line matches **inside one document** only.
+
+**say_document** is the preferred rite for meetings, conversations, and task discussion scrolls: the server appends a markdown block; pass **from_id** as the sender nickname recorded in the heading. The target document **must already exist** (create it first with **put_document** or **append_document**). Do not use **append_document** for chat-style lines; it records no sender.
+
+The default document format is markdown.

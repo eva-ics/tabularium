@@ -1,0 +1,431 @@
+@use "../../styles/tokens" as *;
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  background: $bg-panel;
+  border: 1px solid $border;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid $border;
+  font-size: 0.8rem;
+  color: $text-muted;
+  flex-shrink: 0;
+}
+
+.headerTitle {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.headerActions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.rawToggle {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.72rem;
+  font-family: ui-monospace, monospace;
+  color: $accent;
+  background: $bg-deep;
+  border: 1px solid $border;
+  border-radius: 4px;
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    border-color: $accent-dim;
+  }
+
+  &:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+}
+
+%editBtn {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.72rem;
+  color: $text;
+  background: $bg-deep;
+  border: 1px solid $border;
+  border-radius: 4px;
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    border-color: $accent-dim;
+  }
+
+  &:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+}
+
+.chatToggle {
+  @extend %editBtn;
+  color: $accent;
+}
+
+.editSave {
+  @extend %editBtn;
+  color: $accent;
+}
+
+.editCancel {
+  @extend %editBtn;
+}
+
+.body {
+  flex: 1;
+  overflow: auto;
+  padding: 1rem;
+  outline: none;
+}
+
+.bodyEditing {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0.75rem;
+  gap: 0.5rem;
+}
+
+/* Chat surface: transcript scrolls inside; composer stays pinned (webui.chat). */
+.bodyChat {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0.75rem 0.85rem 1rem;
+  gap: 0.5rem;
+}
+
+.chatGate {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 1rem 0;
+}
+
+.chatGateForm {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: min(100%, 18rem);
+}
+
+.chatGateLabel {
+  font-size: 0.85rem;
+  color: $text-muted;
+}
+
+.chatGateInput {
+  margin: 0;
+  padding: 0.5rem 0.65rem;
+  font: inherit;
+  font-size: 0.9rem;
+  color: $text;
+  background: $bg-deep;
+  border: 1px solid $border;
+  border-radius: 4px;
+}
+
+.chatStartBtn {
+  @extend %editBtn;
+  align-self: flex-start;
+  color: $accent;
+}
+
+.chatWrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.chatBanner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.8rem;
+  color: $risk;
+  background: color-mix(in srgb, $risk 12%, transparent);
+  border: 1px solid color-mix(in srgb, $risk 35%, $border);
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.chatBannerText {
+  flex: 1;
+  min-width: 0;
+}
+
+.chatReconnect {
+  @extend %editBtn;
+  flex-shrink: 0;
+  color: $accent;
+}
+
+.chatStatus {
+  margin: 0;
+  font-size: 0.8rem;
+  color: $text-muted;
+  flex-shrink: 0;
+}
+
+.chatTranscript {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  padding-right: 0.25rem;
+}
+
+.chatComposerRow {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.chatComposer {
+  flex: 1;
+  min-width: 0;
+  min-height: 5.5rem;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0.65rem 0.75rem;
+  font: inherit;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  color: $text;
+  background: $bg-deep;
+  border: 1px solid $border;
+  border-radius: 4px;
+  resize: vertical;
+}
+
+.chatSend {
+  @extend %editBtn;
+  flex-shrink: 0;
+  align-self: stretch;
+  min-width: 3.5rem;
+  color: $accent;
+}
+
+.editArea {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.editor {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0.65rem 0.75rem;
+  font: inherit;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  color: $text;
+  background: $bg-deep;
+  border: 1px solid $border;
+  border-radius: 4px;
+  resize: none;
+}
+
+.saveErr {
+  margin: 0;
+  color: $risk;
+  font-size: 0.82rem;
+}
+
+.pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.85rem;
+
+  :global(mark.previewHighlight) {
+    background: color-mix(in srgb, $accent 32%, transparent);
+    color: $text;
+    padding: 0.06em 0.12em;
+    border-radius: 3px;
+  }
+}
+
+.markdown {
+  font-size: 0.95rem;
+  line-height: 1.55;
+  color: $text;
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    color: $accent;
+    margin: 1.15em 0 0.45em;
+    font-weight: 600;
+    line-height: 1.25;
+  }
+
+  h1 {
+    font-size: 1.45rem;
+    border-bottom: 1px solid $border;
+    padding-bottom: 0.25em;
+  }
+
+  h2 {
+    font-size: 1.2rem;
+  }
+
+  h3 {
+    font-size: 1.05rem;
+  }
+
+  p {
+    margin: 0.65em 0;
+  }
+
+  strong {
+    color: $text;
+    font-weight: 600;
+  }
+
+  em {
+    font-style: italic;
+    color: $text-muted;
+  }
+
+  ul,
+  ol {
+    margin: 0.5em 0;
+    padding-left: 1.35rem;
+  }
+
+  li {
+    margin: 0.25em 0;
+  }
+
+  li::marker {
+    color: $accent-dim;
+  }
+
+  blockquote {
+    margin: 0.75em 0;
+    padding: 0.4em 0.85em;
+    border-left: 3px solid $accent;
+    background: $bg-deep;
+    color: $text-muted;
+  }
+
+  hr {
+    border: none;
+    border-top: 1px solid $border;
+    margin: 1.25em 0;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0.85em 0;
+    font-size: 0.9em;
+  }
+
+  th,
+  td {
+    border: 1px solid $border;
+    padding: 0.35em 0.55em;
+    text-align: left;
+  }
+
+  th {
+    background: $bg-elevated;
+    color: $accent;
+    font-weight: 600;
+  }
+
+  tr:nth-child(even) td {
+    background: $bg-elevated;
+  }
+
+  code {
+    background: $bg-elevated;
+    padding: 0.1em 0.35em;
+    border-radius: 3px;
+    font-size: 0.88em;
+  }
+
+  pre {
+    background: $bg-deep;
+    padding: 0.75rem;
+    border-radius: 4px;
+    overflow: auto;
+    border: 1px solid $border;
+    margin: 0.75em 0;
+
+    code {
+      background: transparent;
+      padding: 0;
+      font-size: 0.88em;
+    }
+  }
+
+  a {
+    color: $accent;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+
+    &:hover {
+      filter: brightness(1.12);
+    }
+  }
+
+  :global(mark.previewHighlight) {
+    background: color-mix(in srgb, $accent 32%, transparent);
+    color: $text;
+    padding: 0.06em 0.12em;
+    border-radius: 3px;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+  }
+}
+
+.empty {
+  color: $text-muted;
+  font-style: italic;
+}
+
+.err {
+  color: $risk;
+}

@@ -1,0 +1,68 @@
+@use "../styles/tokens" as *;
+
+.shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.topNav {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: $bg-elevated;
+  border-bottom: 1px solid $border;
+  flex-shrink: 0;
+}
+
+.brandRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-right: 1rem;
+}
+
+.brandLogo {
+  display: block;
+  width: 1rem;
+  height: 1rem;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.brand {
+  font-weight: 600;
+  line-height: 1rem;
+  letter-spacing: 0.04em;
+  color: $accent;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+}
+
+.navBtn {
+  background: transparent;
+  border: 1px solid $border;
+  color: $text-muted;
+  padding: 0.35rem 0.75rem;
+  border-radius: 4px;
+
+  &:hover {
+    color: $text;
+    border-color: $accent-dim;
+  }
+}
+
+.navBtnActive {
+  color: $text;
+  border-color: $accent;
+  background: $bg-panel;
+}
+
+.main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}

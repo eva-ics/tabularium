@@ -1,0 +1,63 @@
+[package]
+name = "tabularium"
+version.workspace = true
+edition = "2024"
+authors = ["Serhij S. <div@altertech.com>"]
+license = "Apache-2.0"
+repository = "https://github.com/eva-ics/tabularium"
+description = "Markdown-oriented document store library (SQLite + Tantivy)"
+readme = "../README.md"
+keywords = ["docs", "md", "sqlite", "tantivy"]
+
+[features]
+default = ["client"]
+## Everything enabled (same as default today).
+full = ["db", "client"]
+## SQLite + Tantivy + `Database` / `SqliteStorage` / search (no HTTP client).
+db = [
+    "dep:async-trait",
+    "dep:bma-ts",
+    "dep:chrono",
+    "dep:dashmap",
+    "dep:dateparser",
+    "dep:fs-err",
+    "dep:moka",
+    "dep:regex",
+    "dep:serde_json",
+    "dep:sqlx",
+    "dep:tantivy",
+    "dep:tokio",
+    "dep:tracing",
+]
+## Typed JSON-RPC client (`reqwest`). Implies `db` (shared id/error types).
+client = [
+    "db",
+    "dep:futures-util",
+    "dep:reqwest",
+    "dep:serde_json",
+    "dep:tokio-tungstenite",
+]
+
+[dependencies]
+async-trait = { version = "0.1", optional = true }
+bma-ts = { package = "bma-ts", version = "0.2.6", features = ["chrono", "serde", "sqlx"], optional = true }
+chrono = { version = "0.4", optional = true }
+dashmap = { version = "6", optional = true }
+dateparser = { version = "0.2", optional = true }
+futures-util = { version = "0.3", default-features = false, features = ["sink"], optional = true }
+fs-err = { version = "3", optional = true }
+moka = { version = "0.12", features = ["future"], optional = true }
+regex = { version = "1", optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", optional = true }
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "macros"], optional = true }
+tantivy = { version = "0.22", optional = true }
+thiserror = "2"
+tokio = { version = "1", features = ["net", "rt-multi-thread", "macros", "sync", "time"], optional = true }
+tokio-tungstenite = { version = "0.26", default-features = false, features = ["connect", "rustls-tls-webpki-roots"], optional = true }
+tracing = { version = "0.1", optional = true }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }

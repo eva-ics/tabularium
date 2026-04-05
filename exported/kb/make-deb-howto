@@ -1,0 +1,180 @@
+# Debian package how-to
+
+Use a small `make-deb/` directory plus a `just deb` entrypoint. Keep the packaging flow boring and reproducible.
+
+## Layout
+
+Keep packaging assets in repo:
+
+- `make-deb/build.sh` builds `.deb` files from already-built Linux release binaries
+- `make-deb/config.toml.default` or other packaged default config
+- `make-deb/server/postinst`, `prerm`, `postrm` for service packages
+- `systemd/<service>.service` for the unit file
+
+If the project has separate server and CLI binaries, package them separately. Put the CLI in `/usr/bin/...` and the daemon in `/usr/sbin/...` or `/usr/bin/...` consistently with the systemd unit.
+
+## Build flow
+
+Add `just` targets such as:
+
+- `just deb-amd64`
+- `just deb-arm64`
+- `just deb`
+
+Typical flow:
+
+1. Build Linux release binaries, often with `cross` for foreign arch.
+2. Run `make-deb/build.sh` with `TARGET_DIR`, `RUST_TARGET`, and `DEB_ARCH`.
+3. Use `dpkg-deb --build` on staged package trees.
+
+If a feature must be present in packaged builds, pass it explicitly in the build recipe instead of trusting defaults.
+
+Example `build.sh`:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MD="$ROOT/make-deb"
+VERSION="${VERSION:-$(grep -m1 '^version' "$ROOT/server/Cargo.toml" | cut -d'"' -f2)}"
+TARGET_DIR="${TARGET_DIR:-target}"
+RUST_TARGET="${RUST_TARGET:-x86_64-unknown-linux-gnu}"
+DEB_ARCH="${DEB_ARCH:-amd64}"
+
+BIN_DIR="$ROOT/$TARGET_DIR/$RUST_TARGET/release"
+SRV="$BIN_DIR/my-server"
+CLI="$BIN_DIR/my-cli"
+OUT="$MD/dist"
+
+command -v dpkg-deb >/dev/null 2>&1 || {
+    echo "dpkg-deb not found" >&2
+    exit 1
+}
+
+mkdir -p "$OUT"
+stage_cli="$(mktemp -d)"
+stage_srv="$(mktemp -d)"
+cleanup() { rm -rf "$stage_cli" "$stage_srv"; }
+trap cleanup EXIT
+
+mkdir -p "$stage_cli/usr/bin" "$stage_cli/DEBIAN"
+install -m755 "$CLI" "$stage_cli/usr/bin/my-cli"
+cat >"$stage_cli/DEBIAN/control" <<EOF
+Package: my-cli
+Version: $VERSION
+Section: utils
+Priority: optional
+Architecture: $DEB_ARCH
+Maintainer: Example Maintainers <ops@example.invalid>
+Depends: libc6 (>= 2.31)
+Description: Example CLI
+EOF
+
+dpkg-deb --root-owner-group --build "$stage_cli" "$OUT/my-cli_${VERSION}_${DEB_ARCH}.deb"
+
+mkdir -p "$stage_srv/usr/sbin" "$stage_srv/etc/my-project" "$stage_srv/lib/systemd/system" "$stage_srv/DEBIAN"
+install -m755 "$SRV" "$stage_srv/usr/sbin/my-server"
+install -m644 "$MD/config.toml.default" "$stage_srv/etc/my-project/config.toml.default"
+install -m644 "$ROOT/systemd/my-server.service" "$stage_srv/lib/systemd/system/my-server.service"
+install -m755 "$MD/server/postinst" "$stage_srv/DEBIAN/postinst"
+install -m755 "$MD/server/prerm" "$stage_srv/DEBIAN/prerm"
+install -m755 "$MD/server/postrm" "$stage_srv/DEBIAN/postrm"
+cat >"$stage_srv/DEBIAN/control" <<EOF
+Package: my-server
+Version: $VERSION
+Section: net
+Priority: optional
+Architecture: $DEB_ARCH
+Maintainer: Example Maintainers <ops@example.invalid>
+Depends: libc6 (>= 2.31), adduser, my-cli (= $VERSION), systemd | systemd-sysv
+Description: Example server
+EOF
+
+dpkg-deb --root-owner-group --build "$stage_srv" "$OUT/my-server_${VERSION}_${DEB_ARCH}.deb"
+```
+
+## Systemd unit
+
+Example `systemd/my-server.service`:
+
+```ini
+[Unit]
+Description=My Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=my-project
+Group=my-project
+ExecStart=/usr/sbin/my-server /etc/my-project/config.toml
+Restart=always
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/my-project
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Keep the binary path in the unit aligned with the package payload. If `ProtectSystem=full` is enabled, explicitly grant write access to the project data directory with `ReadWritePaths=`.
+
+If the service logs to journald, it is worth making the application detect `INVOCATION_ID` and suppress its own timestamps. systemd already records them, so duplicate dates just add noise.
+
+## What the package should install
+
+For a server package:
+
+- daemon binary
+- systemd unit
+- default config as `/etc/<project>/config.toml.default`
+- maintainer scripts
+
+For a CLI package:
+
+- the client binary only, unless extra shell assets are truly needed
+
+Never overwrite `/etc/<project>/config.toml` on upgrade. Seed it from `config.toml.default` only if it does not exist yet.
+
+## Maintainer script rules
+
+In `postinst`:
+
+- create the system user/group if needed
+- create runtime/data directories with correct owner and restrictive mode
+- create `config.toml` from the default only when missing
+- fix ownership and permissions on `/etc/<project>` and config files
+- `daemon-reload`, enable the unit, and start or restart carefully
+
+In `prerm`:
+
+- if upgrading or removing, stop the service
+- if you want restart-on-upgrade only when it was already running, record that in a sentinel under `/run/`
+
+In `postrm`:
+
+- disable the unit on remove/purge
+- run `daemon-reload`
+
+A `/run/...` sentinel is preferable to a persistent file because it cannot survive reboot and become stale.
+
+## Config defaults
+
+Packaged defaults should use production-safe absolute paths, not dev-relative ones. If the service runs under systemd without a working directory, relative DB/index paths are a trap.
+
+## Dependencies
+
+Do not hand-maintain a heroic dependency list. Derive runtime dependencies from the actual built binaries:
+
+- inspect with `ldd` on the target-like host
+- keep the package `Depends` list minimal and real
+- if the server operationally requires the CLI, make the server package depend on the CLI package explicitly
+
+## Practical rule
+
+The whole rite should be runnable with one command, usually `just deb`. The build should produce installable `.deb` artifacts from repo-controlled packaging files, with no manual post-build fiddling.

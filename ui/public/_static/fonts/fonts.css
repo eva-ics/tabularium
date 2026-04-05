@@ -1,0 +1,11 @@
+/* Vendored typography — no remote CDNs; Omnissiah-approved offline stack. */
+:root {
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    "Helvetica Neue",
+    Arial,
+    sans-serif;
+}

@@ -1,0 +1,15 @@
+[server]
+listen = "127.0.0.1:3050"
+# For systemd (see systemd/tabularium-server.service), use absolute paths — the unit does not rely on WorkingDirectory.
+database_path = "./data/tabularium.db"
+index_dir = "./data/tabularium.index"
+# Tokio worker threads; 0 = use available_parallelism()
+workers = 1
+# Long-poll `wait` RPC / `?wait=true` max wait (seconds)
+timeout = 3600
+
+# Optional MCP (streamable HTTP). Build with: cargo build -p tabularium-server --features mcp
+[mcp]
+listen = "127.0.0.1:3031"
+# Optional path to deployment-specific help (read at startup).
+# server_help = "/path/to/server_help.md"
