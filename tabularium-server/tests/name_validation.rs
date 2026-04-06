@@ -53,6 +53,22 @@ async fn rest_rejects_bad_directory_and_document_names() {
 
     let r = client
         .post(format!("{base}/api/doc"))
+        .json(&json!({ "path": "/.", "description": null }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), reqwest::StatusCode::BAD_REQUEST);
+
+    let r = client
+        .post(format!("{base}/api/doc"))
+        .json(&json!({ "path": "/..", "description": null }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), reqwest::StatusCode::BAD_REQUEST);
+
+    let r = client
+        .post(format!("{base}/api/doc"))
         .json(&json!({ "path": "/42", "description": null }))
         .send()
         .await
@@ -70,6 +86,22 @@ async fn rest_rejects_bad_directory_and_document_names() {
     let r = client
         .put(format!("{base}/api/doc/valcat/999"))
         .json(&json!({ "content": "c" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), reqwest::StatusCode::BAD_REQUEST);
+
+    let r = client
+        .post(format!("{base}/api/doc/valcat"))
+        .json(&json!({ "name": ".", "content": "c" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), reqwest::StatusCode::BAD_REQUEST);
+
+    let r = client
+        .post(format!("{base}/api/doc/valcat"))
+        .json(&json!({ "name": "..", "content": "c" }))
         .send()
         .await
         .unwrap();
@@ -113,6 +145,24 @@ async fn rpc_rejects_bad_paths_and_names() {
         &client,
         base,
         "create_directory",
+        json!({ "path": "/.", "description": null }),
+    )
+    .await;
+    assert_eq!(v["error"]["code"], -32602);
+
+    let v = rpc(
+        &client,
+        base,
+        "create_directory",
+        json!({ "path": "/..", "description": null }),
+    )
+    .await;
+    assert_eq!(v["error"]["code"], -32602);
+
+    let v = rpc(
+        &client,
+        base,
+        "create_directory",
         json!({ "path": "/okcat", "description": null }),
     )
     .await;
@@ -132,6 +182,24 @@ async fn rpc_rejects_bad_paths_and_names() {
         base,
         "create_document",
         json!({ "path": "/okcat/bad//name", "content": "x" }),
+    )
+    .await;
+    assert_eq!(v["error"]["code"], -32602);
+
+    let v = rpc(
+        &client,
+        base,
+        "create_document",
+        json!({ "path": "/okcat/.", "content": "x" }),
+    )
+    .await;
+    assert_eq!(v["error"]["code"], -32602);
+
+    let v = rpc(
+        &client,
+        base,
+        "create_document",
+        json!({ "path": "/okcat/..", "content": "x" }),
     )
     .await;
     assert_eq!(v["error"]["code"], -32602);

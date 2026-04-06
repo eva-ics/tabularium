@@ -31,11 +31,14 @@ pub(crate) fn escape_chat_heading_label(id: &str) -> String {
     s
 }
 
-/// Category and document names must not contain `/` or `\`, and must not be pure decimal strings.
+/// Category and document names must not be empty, `.` / `..`, contain separators, or be pure decimal strings.
 pub fn validate_entity_name(name: impl AsRef<str>) -> Result<()> {
     let name = name.as_ref();
     if name.is_empty() {
         return Err(Error::InvalidInput("name must not be empty".into()));
+    }
+    if name == "." || name == ".." {
+        return Err(Error::InvalidInput("name must not be '.' or '..'".into()));
     }
     if name.contains('/') {
         return Err(Error::InvalidInput("name must not contain '/'".into()));
@@ -53,7 +56,7 @@ pub fn validate_entity_name(name: impl AsRef<str>) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{escape_chat_heading_label, validate_chat_speaker_id};
+    use super::{escape_chat_heading_label, validate_chat_speaker_id, validate_entity_name};
 
     #[test]
     fn chat_id_rejects_empty_colon_and_newlines() {
@@ -68,5 +71,15 @@ mod tests {
         assert_eq!(escape_chat_heading_label("a"), "a");
         assert_eq!(escape_chat_heading_label("a#b"), "a\\#b");
         assert_eq!(escape_chat_heading_label("a\\b"), "a\\\\b");
+    }
+
+    #[test]
+    fn entity_name_rejects_dot_segments_and_separators() {
+        assert!(validate_entity_name(".").is_err());
+        assert!(validate_entity_name("..").is_err());
+        assert!(validate_entity_name("a/b").is_err());
+        assert!(validate_entity_name(r"a\b").is_err());
+        assert!(validate_entity_name("42").is_err());
+        assert!(validate_entity_name("ok").is_ok());
     }
 }
