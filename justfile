@@ -88,3 +88,12 @@ pub-deb:
 deb-native-amd64: build-ui
     cargo build --target x86_64-unknown-linux-gnu --release --features mcp -p tabularium-server -p tabularium-cli
     env TARGET_DIR=target RUST_TARGET=x86_64-unknown-linux-gnu DEB_ARCH=amd64 bash make-deb/build.sh
+
+build-brew: build-ui
+    mkdir -p .brew-dist
+    cargo build --release -p tabularium-server -p tabularium-cli
+    cp target/release/tabularium-server .brew-dist/tabularium-server
+    cp target/release/tb .brew-dist/tb
+
+brew-install: build-brew
+    bash scripts/brew-install.sh

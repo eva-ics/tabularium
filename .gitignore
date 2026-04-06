@@ -10,3 +10,4 @@ config.toml
 *.sqlite-shm
 __pycache__
 exported
+.brew-dist/

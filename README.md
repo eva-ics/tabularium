@@ -50,6 +50,24 @@ just tb search tabularium
 
 `just run` uses `config.toml` when present and falls back to `config.toml.example` for a fresh clone.
 
+## Install (macOS, Homebrew)
+
+```bash
+just brew-install
+```
+
+This installs:
+
+- `tabularium-server` as a Homebrew service target
+- `tb` as a regular CLI binary in `bin` (not a service)
+
+Start and manage the server with:
+
+```bash
+brew services start tabularium
+brew services stop tabularium
+```
+
 ## Docs
 
 - [JSON-RPC methods](docs/json-rpc-methods.md)
