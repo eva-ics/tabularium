@@ -62,8 +62,6 @@ jobs:
         include:
           - runner: macos-14
             target: aarch64-apple-darwin
-          - runner: macos-13
-            target: x86_64-apple-darwin
     steps:
       - uses: actions/checkout@v4
 
@@ -106,10 +104,6 @@ jobs:
             aarch64-apple-darwin)
               [[ "$TB_FILE_OUT" == *"Mach-O"* && "$TB_FILE_OUT" == *"arm64"* ]]
               [[ "$SERVER_FILE_OUT" == *"Mach-O"* && "$SERVER_FILE_OUT" == *"arm64"* ]]
-              ;;
-            x86_64-apple-darwin)
-              [[ "$TB_FILE_OUT" == *"Mach-O"* && "$TB_FILE_OUT" == *"x86_64"* ]]
-              [[ "$SERVER_FILE_OUT" == *"Mach-O"* && "$SERVER_FILE_OUT" == *"x86_64"* ]]
               ;;
             *)
               exit 1
