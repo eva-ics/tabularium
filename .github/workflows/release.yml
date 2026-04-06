@@ -91,6 +91,17 @@ jobs:
             "dist/tabularium-server-${VERSION}-${{ matrix.target }}.tar.gz" \
             > "dist/SHA256SUMS-${{ matrix.target }}.txt"
 
+      - name: Generate Homebrew formula
+        if: contains(matrix.target, 'apple-darwin') && startsWith(github.ref, 'refs/tags/v')
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          bash scripts/generate-homebrew-formula.sh \
+            --tag "${GITHUB_REF_NAME}" \
+            --target "${{ matrix.target }}" \
+            --sums "dist/SHA256SUMS-${{ matrix.target }}.txt" \
+            --out dist/tabularium.rb
+
       - name: Upload release assets
         if: contains(matrix.target, 'apple-darwin') && startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
@@ -99,5 +110,6 @@ jobs:
             dist/tb-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
             dist/tabularium-server-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
             dist/SHA256SUMS-${{ matrix.target }}.txt
+            dist/tabularium.rb
           fail_on_unmatched_files: true
           append_body: true

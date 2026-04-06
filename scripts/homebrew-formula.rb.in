@@ -1,0 +1,51 @@
+class Tabularium < Formula
+  desc "AI-oriented markdown document store with CLI and HTTP server"
+  homepage "https://github.com/@GITHUB_REPO@"
+  license "Apache-2.0"
+  version "@VER_NUM@"
+
+  url "@TB_URL@"
+  sha256 "@TB_SHA@"
+
+  resource "tabularium-server-bin" do
+    url "@SRV_URL@"
+    sha256 "@SRV_SHA@"
+  end
+
+  resource "default-config" do
+    url "@CFG_URL@"
+    sha256 "@CONFIG_SHA@"
+  end
+
+  def install
+    bin.install "tb"
+    resource("tabularium-server-bin").stage do
+      bin.install "tabularium-server"
+    end
+    (etc/"tabularium").mkpath
+    resource("default-config").stage do
+      cp "config.toml.example", etc/"tabularium/config.toml"
+    end
+    inreplace etc/"tabularium/config.toml" do |s|
+      s.gsub!("./data/tabularium.db", "#{var}/tabularium/tabularium.db")
+      s.gsub!("./data/tabularium.index", "#{var}/tabularium/tabularium.index")
+    end
+  end
+
+  def post_install
+    (var/"tabularium").mkpath
+  end
+
+  service do
+    run [opt_bin/"tabularium-server", etc/"tabularium/config.toml"]
+    keep_alive true
+    working_dir var/"tabularium"
+    log_path var/"log/tabularium.log"
+    error_log_path var/"log/tabularium.error.log"
+  end
+
+  test do
+    assert_match "tabularium CLI", shell_output("#{bin}/tb --help")
+    assert_match "tabularium-server", shell_output("#{bin}/tabularium-server --help")
+  end
+end
