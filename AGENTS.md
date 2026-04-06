@@ -22,7 +22,6 @@ For machine spirits and maintainers: layout, commands, and doctrine.
 - **Read cache**: `moka` async cache holds document bodies only; `cache_size == 0` keeps the cache object but never stores entries. Mutations invalidate the affected document id after a successful storage write.
 - **`reindex`**: `Database::reindex(None)` clears the Tantivy index and rebuilds from every `documents` row. `Database::reindex(Some(category_id))` re-upserts only rows in that directory (internal `category_id`); other indexed documents are left as-is. Public API uses directory/path vocabulary only.
 - **Tracing**: the library uses `tracing` spans on `SqliteDatabase::init`, `Database` façade methods, `SqliteStorage` (`Storage`), and `SearchIndex` I/O. Install a subscriber in binaries/tests (e.g. `tracing_subscriber`) and set `RUST_LOG=tabularium=debug` (or `trace`) to see them; the library crate does not initialize global logging.
-- **Pre-release compatibility doctrine**: until Enginseer declares release discipline, no backward compatibility is promised for storage schema, RPC wire details, CLI output shape, or REST response shape. Do not add migration frameworks, compatibility shims, or legacy detection for older DBs. Tests and tooling target the current schema only; local DBs may break when DDL changes.
 
 ## Build & test
 

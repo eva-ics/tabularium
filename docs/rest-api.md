@@ -26,5 +26,3 @@ Path segments under `/api/doc/…` accept **name** or **numeric id** per segment
 Response: JSON array of `{ document_id, path, snippet, score, line_number? }`.
 
 Errors: JSON `{ "error": "message" }` with `400` / `404` / `409` / `500` as appropriate.
-
-*No backward compatibility is promised until Enginseer declares release — see `AGENTS.md`.*

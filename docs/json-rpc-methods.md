@@ -53,5 +53,3 @@ Path rules:
 | `wait` | `{ path }` | `null` when document body changes after the call begins; `-32602` with `"wait timed out"` at server long-poll ceiling |
 
 Storage still uses an internal `categories` table / `category_id` for directory rows; that is **not** exposed on the wire.
-
-*The Emperor’s catalog is versioned in blood and bytes until release discipline is declared.*
