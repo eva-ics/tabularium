@@ -4,7 +4,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use termimad::crossterm::style::{Attribute, Color as CrosstermColor, ContentStyle};
 use termimad::minimad::Compound;
-use termimad::{CompositeKind, FmtComposite, FmtLine, FmtTableRow, FmtText, MadSkin};
+use termimad::{CompositeKind, FmtComposite, FmtLine, FmtTableRow, FmtTableRule, FmtText, MadSkin};
 
 #[allow(clippy::match_same_arms)] // several crossterm "dark" hues map to ratatui DarkGray
 fn crossterm_to_ratatui_color(c: CrosstermColor) -> Color {
@@ -113,14 +113,26 @@ fn fmt_composite_to_line(skin: &MadSkin, fc: &FmtComposite<'_>) -> Line<'static>
     }
 }
 
+fn push_padded_table_cell(skin: &MadSkin, cell: &FmtComposite<'_>, spans: &mut Vec<Span<'static>>) {
+    let line_style = skin.line_style(cell.kind);
+    let (left_pad, right_pad) = cell.completions();
+    for _ in 0..left_pad {
+        spans.push(Span::raw(" "));
+    }
+    push_compound_spans(skin, line_style, &cell.compounds, spans);
+    for _ in 0..right_pad {
+        spans.push(Span::raw(" "));
+    }
+}
+
 fn table_row_to_line(skin: &MadSkin, row: &FmtTableRow<'_>) -> Line<'static> {
+    let sep = Style::default().fg(Color::DarkGray);
     let mut spans: Vec<Span<'static>> = Vec::new();
     for (i, cell) in row.cells.iter().enumerate() {
         if i > 0 {
-            spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
+            spans.push(Span::styled(" │ ", sep));
         }
-        let ls = skin.line_style(cell.kind);
-        push_compound_spans(skin, ls, &cell.compounds, &mut spans);
+        push_padded_table_cell(skin, cell, &mut spans);
     }
     if spans.is_empty() {
         Line::from("")
@@ -129,13 +141,29 @@ fn table_row_to_line(skin: &MadSkin, row: &FmtTableRow<'_>) -> Line<'static> {
     }
 }
 
+fn table_rule_to_line(rule: &FmtTableRule) -> Line<'static> {
+    let sep_style = Style::default().fg(Color::DarkGray);
+    if rule.widths.is_empty() {
+        return Line::from(Span::styled("─".repeat(16), sep_style));
+    }
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    for (i, &w) in rule.widths.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled("─┼─", sep_style));
+        }
+        spans.push(Span::styled("─".repeat(w), sep_style));
+    }
+    Line::from(spans)
+}
+
 fn fmt_lines_to_ratatui(skin: &MadSkin, fmt: &FmtText<'_, '_>) -> Vec<Line<'static>> {
     let mut out = Vec::new();
     for line in &fmt.lines {
         match line {
             FmtLine::Normal(fc) => out.push(fmt_composite_to_line(skin, fc)),
             FmtLine::TableRow(row) => out.push(table_row_to_line(skin, row)),
-            FmtLine::TableRule(_) | FmtLine::HorizontalRule => out.push(Line::from(Span::styled(
+            FmtLine::TableRule(rule) => out.push(table_rule_to_line(rule)),
+            FmtLine::HorizontalRule => out.push(Line::from(Span::styled(
                 "─".repeat(16),
                 Style::default().fg(Color::DarkGray),
             ))),
@@ -195,5 +223,51 @@ mod tests {
             .flat_map(|l| l.spans.iter().map(|s| s.content.to_string()))
             .collect();
         assert!(joined.contains("Title"));
+    }
+
+    fn line_display(line: &Line<'_>) -> String {
+        line.spans
+            .iter()
+            .map(|s| s.content.to_string())
+            .collect::<String>()
+    }
+
+    #[test]
+    fn pipe_table_rows_share_visual_width() {
+        let skin = MadSkin::default();
+        let md = "| a | bbbbb |\n| --- | --- |\n| x | y |\n";
+        let t = markdown_transcript_text(md, 80, &skin);
+        let piped: Vec<String> = t
+            .lines
+            .iter()
+            .map(line_display)
+            .filter(|s| s.contains('│'))
+            .collect();
+        assert!(
+            piped.len() >= 2,
+            "expected header + body rows with column separators, got {piped:?}"
+        );
+        assert_eq!(
+            piped[0].len(),
+            piped[piped.len() - 1].len(),
+            "padded cells should align header and last data row"
+        );
+    }
+
+    #[test]
+    fn pipe_table_rule_matches_column_widths() {
+        let skin = MadSkin::default();
+        let md = "| aa | bbb |\n| -- | --- |\n| c | d |\n";
+        let t = markdown_transcript_text(md, 80, &skin);
+        let lines: Vec<String> = t.lines.iter().map(line_display).collect();
+        let rule = lines
+            .iter()
+            .find(|s| s.contains('┼') || s.starts_with('─'))
+            .expect("separator row");
+        let header = lines.iter().find(|s| s.contains('│')).expect("header");
+        assert!(
+            rule.len() >= header.len().saturating_sub(2),
+            "rule should span roughly the table width (rule={rule:?} header={header:?})"
+        );
     }
 }
