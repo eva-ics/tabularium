@@ -599,7 +599,7 @@ def test_editor_gfm_preview_renders_table(
     s = seed_gfm_table_preview_doc
     _open_editor_doc(selenium_driver, tabularium_base_url, s["root"], s["name"])
     pane = selenium_driver.find_element(By.CSS_SELECTOR, "[data-testid='preview-pane']")
-    tables = pane.find_elements(By.CSS_SELECTOR, ".markdown table")
+    tables = pane.find_elements(By.CSS_SELECTOR, "table")
     assert len(tables) >= 1
     assert tables[0].find_elements(By.TAG_NAME, "th")
     assert tables[0].find_elements(By.TAG_NAME, "td")

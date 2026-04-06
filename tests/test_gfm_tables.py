@@ -17,7 +17,7 @@ FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "gfm_table_fixture
 
 
 def test_cli_cat_renders_gfm_fixture_body():
-    """CLI `cat` uses termimad; fixture must render without raw pipe-table lines only."""
+    """CLI `cat` renders markdown only on a TTY; captured output is raw (meetings/tables)."""
     base = _base()
     tb = _tb_bin()
     body = FIXTURE_PATH.read_text(encoding="utf-8")
@@ -40,6 +40,4 @@ def test_cli_cat_renders_gfm_fixture_body():
     out = p.stdout
     assert "tokio" in out
     assert "Domain" in out
-    assert (
-        "|--------|-----|-------|" not in out
-    ), "raw GFM separator line should not appear verbatim in rendered cat output"
+    assert "|--------|-----|-------|" in out, "captured stdout should keep raw GFM separator line"

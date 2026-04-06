@@ -19,12 +19,15 @@ import {
   rehypeSearchHighlight,
   splitPlainTextForPreview,
 } from "./highlightSearchTerms";
-import { extendSchemaWithGfmTables } from "../../markdown/gfmSanitize";
+import {
+  extendSchemaWithGfmTables,
+  gfmTableSanitizeSchema,
+} from "../../markdown/gfmSanitize";
 import styles from "./PreviewPane.module.scss";
 
 const sanitizeWithMark: Schema = extendSchemaWithGfmTables({
-  ...defaultSchema,
-  tagNames: [...(defaultSchema.tagNames ?? []), "mark"],
+  ...gfmTableSanitizeSchema,
+  tagNames: [...(gfmTableSanitizeSchema.tagNames ?? []), "mark"],
   attributes: {
     ...defaultSchema.attributes,
     mark: ["className", "class"],
@@ -93,18 +96,13 @@ export const PreviewPane = forwardRef<HTMLDivElement, PreviewPaneProps>(
     const highlightActive = highlightTrimmed.length >= 2;
 
     const rehypePlugins = useMemo(() => {
-      if (!highlightActive) {
-        const sanitize: [typeof rehypeSanitize, Schema] = [
-          rehypeSanitize,
-          extendSchemaWithGfmTables(defaultSchema),
-        ];
-        return [sanitize];
-      }
       const sanitize: [typeof rehypeSanitize, Schema] = [
         rehypeSanitize,
-        sanitizeWithMark,
+        highlightActive ? sanitizeWithMark : gfmTableSanitizeSchema,
       ];
-      return [rehypeSearchHighlight(highlightTrimmed), sanitize];
+      return highlightActive
+        ? [rehypeSearchHighlight(highlightTrimmed), sanitize]
+        : [sanitize];
     }, [highlightActive, highlightTrimmed]);
 
     const rawTerms = useMemo(
