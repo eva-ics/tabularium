@@ -8,7 +8,7 @@ Tabularium is an AI-oriented markdown document store with full-text
 search, a real directory tree, and several ways to work with the same data: web
 UI, CLI, REST, JSON-RPC, MCP, or the Rust library.
 
-<img src="https://raw.githubusercontent.com/eva-ics/tabularium/main/ss/webui2.png" width="800" />
+<img src="https://raw.githubusercontent.com/eva-ics/tabularium/main/ss/webui-d.png" width="800" />
 
 ## What It Does
 
