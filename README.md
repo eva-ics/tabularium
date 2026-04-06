@@ -6,7 +6,7 @@
 </h2>
 
 
-Tabularium is an AI-oriented markdown-oriented document store with full-text
+Tabularium is an AI-oriented markdown document store with full-text
 search, a real directory tree, and several ways to work with the same data: web
 UI, CLI, REST, JSON-RPC, MCP, or the Rust library.
 
