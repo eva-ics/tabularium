@@ -25,7 +25,7 @@ class Tabularium < Formula
   end
 
   service do
-    run [opt_bin/"tabularium-server", etc/"tabularium/config.toml"]
+    run [opt_bin/"tabularium-server", "--config", etc/"tabularium/config.toml"]
     keep_alive true
     working_dir var/"tabularium"
     log_path var/"log/tabularium.log"
