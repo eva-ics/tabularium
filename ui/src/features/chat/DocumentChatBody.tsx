@@ -12,12 +12,14 @@ import {
 } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
+import remarkGfm from "remark-gfm";
 
 import {
   readChatNicknameFromCookie,
   writeChatNicknameCookie,
 } from "./chatNicknameCookie";
 import { type DocumentChatStatus, useDocumentChat } from "./useDocumentChat";
+import { gfmTableSanitizeSchema } from "../../markdown/gfmSanitize";
 import styles from "../entries/PreviewPane.module.scss";
 
 const NICK_CMD = /^\/nick\s+(.+)$/;
@@ -200,7 +202,10 @@ export const DocumentChatBody = forwardRef<
         className={`${styles.markdown} ${styles.chatTranscript}`}
         data-testid="chat-transcript"
       >
-        <ReactMarkdown rehypePlugins={[rehypeSanitize]}>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          rehypePlugins={[[rehypeSanitize, gfmTableSanitizeSchema]]}
+        >
           {transcript}
         </ReactMarkdown>
       </div>

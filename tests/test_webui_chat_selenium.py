@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from pathlib import Path
 
 import pytest
 import requests
@@ -344,3 +345,50 @@ def test_chat_c09_raw_toggle_triggers_reload(
     selenium_driver.find_element(By.CSS_SELECTOR, "[data-testid='preview-raw-toggle']").click()
     _wait_preview_pane_contains(selenium_driver, m1, timeout=25)
     assert not _preview_pane_contains(selenium_driver, m0)
+
+
+GFM_TABLE_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "gfm_table_fixture.md"
+
+
+@pytest.fixture
+def seed_gfm_chat_table_doc(tabularium_base_url: str) -> dict:
+    slug = f"gfm_ch_{uuid.uuid4().hex[:10]}"
+    name = "room.md"
+    marker = uuid.uuid4().hex[:8]
+    body = f"# Chat GFM {marker}\n\n" + GFM_TABLE_FIXTURE.read_text(encoding="utf-8")
+    base = tabularium_base_url.rstrip("/")
+    _put_plain(base, f"{slug}/{name}", body)
+    return {"root": slug, "name": name, "marker": marker}
+
+
+def test_chat_gfm_transcript_renders_table(
+    selenium_driver,
+    tabularium_base_url,
+    seed_gfm_chat_table_doc: dict,
+):
+    """Chat transcript renders GFM pipe tables (`meetings/tables`)."""
+    selenium_driver.set_window_size(1200, 800)
+    selenium_driver.delete_all_cookies()
+    s = seed_gfm_chat_table_doc
+    base = tabularium_base_url.rstrip("/")
+    selenium_driver.get(base + "/entries")
+    _wait_app_ready(selenium_driver)
+    _wait_entries_loaded(selenium_driver)
+    _open_file_in_tree(selenium_driver, s["root"], s["name"])
+    _wait_preview_chat_visible(selenium_driver)
+    selenium_driver.find_element(By.CSS_SELECTOR, "[data-testid='preview-chat']").click()
+    _wait(selenium_driver).until(
+        EC.visibility_of_element_located((By.CSS_SELECTOR, "[data-testid='chat-gate']")),
+    )
+    selenium_driver.find_element(By.CSS_SELECTOR, "[data-testid='chat-gate-input']").send_keys(
+        "gfm_tester",
+    )
+    selenium_driver.find_element(By.CSS_SELECTOR, "[data-testid='chat-start']").click()
+    _wait(selenium_driver).until(
+        EC.visibility_of_element_located((By.CSS_SELECTOR, "[data-testid='chat-composer']")),
+    )
+    _wait_chat_connected(selenium_driver, f"Chat GFM {s['marker']}")
+    transcript = selenium_driver.find_element(By.CSS_SELECTOR, "[data-testid='chat-transcript']")
+    tables = transcript.find_elements(By.CSS_SELECTOR, "table")
+    assert len(tables) >= 1
+    assert tables[0].find_elements(By.TAG_NAME, "td")

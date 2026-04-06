@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import sys
 import uuid
+from pathlib import Path
 from urllib.parse import quote
 
 import pytest
@@ -573,3 +574,32 @@ def test_editor_t14_same_file_skips_confirm(
         selenium_driver.execute_script(
             "window.confirm = function() { return true; };",
         )
+
+
+GFM_TABLE_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "gfm_table_fixture.md"
+
+
+@pytest.fixture
+def seed_gfm_table_preview_doc(tabularium_base_url: str) -> dict:
+    slug = f"gfm_ed_{uuid.uuid4().hex[:10]}"
+    name = "tables.md"
+    body = GFM_TABLE_FIXTURE.read_text(encoding="utf-8")
+    base = tabularium_base_url.rstrip("/")
+    _put_plain(base, f"{slug}/{name}", body)
+    return {"root": slug, "name": name}
+
+
+def test_editor_gfm_preview_renders_table(
+    selenium_driver,
+    tabularium_base_url,
+    seed_gfm_table_preview_doc: dict,
+):
+    """Preview pane renders GFM pipe tables as HTML (`meetings/tables`)."""
+    selenium_driver.set_window_size(1200, 800)
+    s = seed_gfm_table_preview_doc
+    _open_editor_doc(selenium_driver, tabularium_base_url, s["root"], s["name"])
+    pane = selenium_driver.find_element(By.CSS_SELECTOR, "[data-testid='preview-pane']")
+    tables = pane.find_elements(By.CSS_SELECTOR, ".markdown table")
+    assert len(tables) >= 1
+    assert tables[0].find_elements(By.TAG_NAME, "th")
+    assert tables[0].find_elements(By.TAG_NAME, "td")

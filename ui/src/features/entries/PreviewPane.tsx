@@ -8,6 +8,7 @@ import {
 } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
+import remarkGfm from "remark-gfm";
 import { defaultSchema } from "hast-util-sanitize";
 import type { Schema } from "hast-util-sanitize";
 import { getDocument, putDocument } from "../../api/client";
@@ -18,16 +19,17 @@ import {
   rehypeSearchHighlight,
   splitPlainTextForPreview,
 } from "./highlightSearchTerms";
+import { extendSchemaWithGfmTables } from "../../markdown/gfmSanitize";
 import styles from "./PreviewPane.module.scss";
 
-const sanitizeWithMark: Schema = {
+const sanitizeWithMark: Schema = extendSchemaWithGfmTables({
   ...defaultSchema,
   tagNames: [...(defaultSchema.tagNames ?? []), "mark"],
   attributes: {
     ...defaultSchema.attributes,
     mark: ["className", "class"],
   },
-};
+});
 
 export interface EditSessionState {
   active: boolean;
@@ -92,7 +94,11 @@ export const PreviewPane = forwardRef<HTMLDivElement, PreviewPaneProps>(
 
     const rehypePlugins = useMemo(() => {
       if (!highlightActive) {
-        return [rehypeSanitize];
+        const sanitize: [typeof rehypeSanitize, Schema] = [
+          rehypeSanitize,
+          extendSchemaWithGfmTables(defaultSchema),
+        ];
+        return [sanitize];
       }
       const sanitize: [typeof rehypeSanitize, Schema] = [
         rehypeSanitize,
@@ -116,9 +122,7 @@ export const PreviewPane = forwardRef<HTMLDivElement, PreviewPaneProps>(
     const showDoc = !loading && !error && content !== null;
     const docIdentified = pathLabel != null && !error;
     const showRawToggle =
-      docIdentified &&
-      documentSurface === "preview" &&
-      (showDoc || loading);
+      docIdentified && documentSurface === "preview" && (showDoc || loading);
     const showFullscreenToggle =
       docIdentified &&
       (documentSurface === "preview" || documentSurface === "chat") &&
@@ -346,7 +350,10 @@ export const PreviewPane = forwardRef<HTMLDivElement, PreviewPaneProps>(
           ) : null}
           {showPreviewBody && !rawMode ? (
             <div className={styles.markdown}>
-              <ReactMarkdown rehypePlugins={rehypePlugins}>
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                rehypePlugins={rehypePlugins}
+              >
                 {content}
               </ReactMarkdown>
             </div>
