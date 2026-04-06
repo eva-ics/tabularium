@@ -22,6 +22,13 @@ UI, CLI, REST, JSON-RPC, MCP, or the Rust library.
 - `tabularium-cli`: `tb` command-line client with one-shot commands, interactive shell, and chat flows.
 - `ui`: Vite/React frontend embedded into the server build.
 
+## Linux installation
+
+```bash
+curl https://pub.bma.ai/apt/setup | sudo sh
+sudo apt-get install tabularium-server tabularium-cli
+```
+
 ## Quick Start
 
 ```bash
