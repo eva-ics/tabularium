@@ -57,11 +57,14 @@ just tb search tabularium
 - [JSON-RPC methods](docs/json-rpc-methods.md)
 - [REST API](docs/rest-api.md)
 - [curl examples](docs/curl-examples.md)
+- [Chat mode](docs/chat-mode.md)
 - [AI agents](docs/AI-Agents.md)
 
 ## AI Agents
 
 When an AI agent uses Tabularium as shared project memory, point it at the MCP endpoint and keep it on the MCP tool surface. The practical setup and meeting workflow live in [docs/AI-Agents.md](docs/AI-Agents.md).
+
+Human chat and meeting usage across the Web UI and `tb chat` is described in [docs/chat-mode.md](docs/chat-mode.md).
 
 ## Development
 
