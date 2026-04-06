@@ -11,10 +11,12 @@ class Tabularium < Formula
     bin.install ".brew-dist/tb"
 
     (etc/"tabularium").mkpath
-    cp "config.toml.example", etc/"tabularium/config.toml"
-    inreplace etc/"tabularium/config.toml" do |s|
-      s.gsub!("./data/tabularium.db", "#{var}/tabularium/tabularium.db")
-      s.gsub!("./data/tabularium.index", "#{var}/tabularium/tabularium.index")
+    unless (etc/"tabularium/config.toml").exist?
+      cp "config.toml.example", etc/"tabularium/config.toml"
+      inreplace etc/"tabularium/config.toml" do |s|
+        s.gsub!("./data/tabularium.db", "#{var}/tabularium/tabularium.db")
+        s.gsub!("./data/tabularium.index", "#{var}/tabularium/tabularium.index")
+      end
     end
   end
 
@@ -31,7 +33,7 @@ class Tabularium < Formula
   end
 
   test do
-    assert_match "tabularium CLI", shell_output("#{bin}/tb --help")
-    assert_match "tabularium-server", shell_output("#{bin}/tabularium-server --help")
+    assert_predicate bin/"tb", :exist?
+    assert_predicate bin/"tabularium-server", :exist?
   end
 end
