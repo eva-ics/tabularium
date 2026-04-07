@@ -466,6 +466,30 @@ impl Client {
         Ok(())
     }
 
+    /// `copy_entries` RPC — copy file or directory (virtual paths only).
+    pub async fn copy_entries(
+        &self,
+        src: impl AsRef<Path>,
+        dst: impl AsRef<Path>,
+        recursive: bool,
+    ) -> Result<()> {
+        let src = normalize_path_for_rpc(src)?;
+        let dst = normalize_path_for_rpc(dst)?;
+        let params = json!({ "src": src, "dst": dst, "recursive": recursive });
+        self.call("copy_entries", params).await?;
+        Ok(())
+    }
+
+    /// Back-compat alias for [`Self::copy_entries`].
+    pub async fn cp(
+        &self,
+        src: impl AsRef<Path>,
+        dst: impl AsRef<Path>,
+        recursive: bool,
+    ) -> Result<()> {
+        self.copy_entries(src, dst, recursive).await
+    }
+
     /// `move_directory` RPC; relocate a directory under `new_parent` with `new_name`.
     pub async fn move_directory(
         &self,

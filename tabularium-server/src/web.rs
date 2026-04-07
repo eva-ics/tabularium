@@ -14,7 +14,7 @@ use serde_json::{Map, Value, json};
 use tracing::info;
 
 use crate::ws_doc::ws_upgrade;
-use tabularium::resource_path::{canonical_path_segments, normalize_user_path};
+use tabularium::resource_path::{canonical_path_segments, normalize_path_for_rpc};
 use tabularium::validate_entity_name;
 use tabularium::{DocumentWaitStatus, EntryKind, Error, SqliteDatabase, TailMode};
 
@@ -71,12 +71,7 @@ fn resolve_create_directory_body(body: &CreateDirectoryBody) -> tabularium::Resu
     match (&body.path, &body.name) {
         (Some(p), _) => {
             let t = p.trim();
-            if !t.starts_with('/') && t.contains('/') {
-                return Err(Error::InvalidInput(
-                    "path must be absolute (start with /)".into(),
-                ));
-            }
-            normalize_user_path(t)
+            normalize_path_for_rpc(t)
         }
         (_, Some(n)) => {
             let n = n.trim();
@@ -599,25 +594,18 @@ fn get_slice_line(m: &Map<String, Value>, primary: &str, alias: &str) -> tabular
 }
 
 fn rpc_path(m: &Map<String, Value>, key: &str) -> tabularium::Result<String> {
-    normalize_user_path(get_str(m, key)?)
+    normalize_path_for_rpc(get_str(m, key)?)
 }
 
-/// Relative multi-segment paths are rejected; single-segment root name or absolute path OK.
 fn rpc_new_dir_path(m: &Map<String, Value>) -> tabularium::Result<String> {
     let s = get_str(m, "path")?;
-    let t = s.trim();
-    if !t.starts_with('/') && t.contains('/') {
-        return Err(Error::InvalidInput(
-            "path must be absolute (start with /)".into(),
-        ));
-    }
-    normalize_user_path(t)
+    normalize_path_for_rpc(s)
 }
 
 fn list_directory_rpc_path(m: &Map<String, Value>) -> tabularium::Result<String> {
     match m.get("path").and_then(|v| v.as_str()) {
         None | Some("") => Ok("/".to_string()),
-        Some(s) => normalize_user_path(s),
+        Some(s) => normalize_path_for_rpc(s),
     }
 }
 
@@ -625,7 +613,7 @@ fn directory_search_prefix(m: &Map<String, Value>) -> tabularium::Result<Option<
     match m.get("path").and_then(|v| v.as_str()) {
         None | Some("" | "/") => Ok(None),
         Some(s) => {
-            let n = normalize_user_path(s)?;
+            let n = normalize_path_for_rpc(s)?;
             canonical_path_segments(&n)?;
             Ok(Some(n.trim_end_matches('/').to_string()))
         }
@@ -841,6 +829,15 @@ pub(crate) async fn dispatch_app_rpc(
             st.db.move_document_to_directory(fid, &parent, name).await?;
             Ok(Value::Null)
         }
+        "copy_entries" => {
+            let src = rpc_path(&m, "src")?;
+            let dst = rpc_path(&m, "dst")?;
+            let recursive = m.get("recursive").and_then(Value::as_bool).unwrap_or(false);
+            canonical_path_segments(&src)?;
+            canonical_path_segments(&dst)?;
+            st.db.cp(&src, &dst, recursive).await?;
+            Ok(Value::Null)
+        }
         "get_document" | "cat" => {
             let path = rpc_path(&m, "path")?;
             let fid = st.db.resolve_existing_file_path(&path).await?;
@@ -919,7 +916,7 @@ pub(crate) async fn dispatch_app_rpc(
                     if s.is_empty() || s == "/" {
                         None
                     } else {
-                        let n = normalize_user_path(s)?;
+                        let n = normalize_path_for_rpc(s)?;
                         canonical_path_segments(&n)?;
                         Some(n)
                     }

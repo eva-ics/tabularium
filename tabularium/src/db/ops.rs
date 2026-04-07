@@ -297,6 +297,116 @@ impl<S: Storage> Database<S> {
         Ok(())
     }
 
+    /// Unix-like `cp` within Tabularium virtual paths.
+    ///
+    /// - File source: copies body to `dst` (overwrites); if `dst` is an existing directory, copies into it.
+    /// - Directory source: requires `recursive`; copies full subtree, including empty directories.
+    #[instrument(skip(self), fields(src = %src.as_ref(), dst = %dst.as_ref(), recursive), err(Debug))]
+    pub async fn cp(
+        &self,
+        src: impl AsRef<str> + Send,
+        dst: impl AsRef<str> + Send,
+        recursive: bool,
+    ) -> Result<()> {
+        fn trim_nonroot_trailing_slash(p: &str) -> &str {
+            if p == "/" {
+                "/"
+            } else {
+                p.trim_end_matches('/')
+            }
+        }
+
+        let src = trim_nonroot_trailing_slash(src.as_ref());
+        let dst = trim_nonroot_trailing_slash(dst.as_ref());
+        if src.is_empty() || src == "/" {
+            return Err(Error::InvalidInput("cp: invalid source path".into()));
+        }
+        canonical_path_segments(src)?;
+        canonical_path_segments(dst)?;
+
+        let dst_is_dir = match self.resolve_directory_path(dst).await {
+            Ok(_) => true,
+            Err(Error::NotFound(_)) => false,
+            Err(e) => return Err(e),
+        };
+
+        // Try file first, then directory.
+        if let Ok(fid) = self.resolve_file_path(src).await {
+            let (_, name) = parent_and_final_name(src)?;
+            let dst_file = if dst_is_dir {
+                if dst == "/" {
+                    format!("/{name}")
+                } else {
+                    format!("{dst}/{name}")
+                }
+            } else {
+                dst.to_string()
+            };
+            if dst_file == src {
+                return Err(Error::InvalidInput(
+                    "cp: cannot copy a file onto itself".into(),
+                ));
+            }
+            let body = self.get_document(fid).await?;
+            self.put_document_by_path(&dst_file, &body).await?;
+            return Ok(());
+        }
+
+        let _src_did = self.resolve_directory_path(src).await?;
+        if !recursive {
+            return Err(Error::InvalidInput(format!(
+                "cp: {src}: is a directory (use -r)"
+            )));
+        }
+        let (_, src_name) = parent_and_final_name(src)?;
+        let dst_root = if dst_is_dir {
+            if dst == "/" {
+                format!("/{src_name}")
+            } else {
+                format!("{dst}/{src_name}")
+            }
+        } else {
+            dst.to_string()
+        };
+
+        if dst_root == src || dst_root.starts_with(&format!("{src}/")) {
+            return Err(Error::InvalidInput(
+                "cp: cannot copy a directory into itself".into(),
+            ));
+        }
+
+        fn join_dir(parent: &str, name: &str) -> String {
+            let p = parent.trim_end_matches('/');
+            let n = name.trim_start_matches('/');
+            if p.is_empty() || p == "/" {
+                format!("/{n}")
+            } else {
+                format!("{p}/{n}")
+            }
+        }
+
+        let mut stack: Vec<(String, String)> = vec![(src.to_string(), dst_root)];
+        while let Some((src_dir, dst_dir)) = stack.pop() {
+            self.storage.ensure_directory_path(&dst_dir).await?;
+            let entries = self.storage.list_directory(&src_dir).await?;
+            for e in entries {
+                let src_child = join_dir(&src_dir, e.name());
+                let dst_child = join_dir(&dst_dir, e.name());
+                if e.kind() == EntryKind::Dir {
+                    stack.push((src_child, dst_child));
+                } else if e.kind() == EntryKind::File {
+                    let fid = self
+                        .storage
+                        .resolve_path(&src_child, Some(EntryKind::File))
+                        .await?;
+                    let body = self.get_document(fid).await?;
+                    self.put_document_by_path(&dst_child, &body).await?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Resolve path for RPC: file path must exist as a file.
     #[instrument(skip(self, path))]
     pub async fn resolve_existing_file_path(

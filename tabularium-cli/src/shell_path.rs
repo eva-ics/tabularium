@@ -60,16 +60,7 @@ fn resolve_relative_to_segments(rel: &str, shell_cwd: Option<&str>) -> Result<Ve
 
 fn doc_path_merge_with_cwd(rel: &str) -> bool {
     let rel = rel.trim_end_matches('/').trim();
-    if rel.is_empty() {
-        return true;
-    }
-    if rel == "." || rel == ".." {
-        return true;
-    }
-    if rel.starts_with("./") || rel.starts_with("../") {
-        return true;
-    }
-    !rel.contains('/')
+    !rel.is_empty()
 }
 
 /// `true` for `ls other` style names: one root-level segment, no dot semantics.
@@ -204,8 +195,11 @@ mod tests {
     }
 
     #[test]
-    fn doc_multi_segment_root_relative() {
-        assert_eq!(resolve_shell_doc_path("x/doc", Some("n")).unwrap(), "x/doc");
+    fn doc_multi_segment_uses_cwd() {
+        assert_eq!(
+            resolve_shell_doc_path("x/doc", Some("n")).unwrap(),
+            "n/x/doc"
+        );
     }
 
     #[test]

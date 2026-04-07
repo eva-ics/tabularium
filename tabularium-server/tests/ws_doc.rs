@@ -229,3 +229,47 @@ async fn ws_say_op_appends_formatted_line() {
     assert_eq!(v["op"], "append");
     assert_eq!(v["data"], "\n## bob\n\nhi\n\n");
 }
+
+#[tokio::test]
+async fn ws_subscribe_normalizes_unrooted_and_dot_segments() {
+    let s = spawn_test_server().await;
+    let base = &s.base_url;
+    let host = base.trim_start_matches("http://");
+    let ws_url = format!("ws://{host}/ws");
+    let http = Client::new();
+    let cat = "ws_norm_cat";
+    let sub = "sub";
+    let doc = "ws_norm_doc";
+    let canonical = format!("/{cat}/{sub}/{doc}");
+    let wire_path = format!("{cat}//{sub}/../{sub}/./{doc}");
+
+    http.post(format!("{base}/api/doc"))
+        .json(&json!({ "path": format!("/{cat}"), "description": null }))
+        .send()
+        .await
+        .unwrap();
+    http.post(format!("{base}/api/doc/{cat}"))
+        .json(&json!({ "path": format!("/{cat}/{sub}"), "description": null }))
+        .send()
+        .await
+        .unwrap();
+    http.put(format!("{base}/api/doc/{cat}/{sub}/{doc}"))
+        .json(&json!({ "content": "x" }))
+        .send()
+        .await
+        .unwrap();
+
+    let (mut ws, _) = tokio_tungstenite::connect_async(&ws_url).await.unwrap();
+    let sub = json!({"op":"subscribe","path": wire_path, "lines": 10}).to_string();
+    ws.send(Message::Text(sub.into())).await.unwrap();
+
+    let raw = ws.next().await.unwrap().unwrap();
+    let t = match raw {
+        Message::Text(t) => t.to_string(),
+        other => panic!("expected Text, got {other:?}"),
+    };
+    let v: Value = serde_json::from_str(&t).unwrap();
+    assert_eq!(v["op"], "reset");
+    assert_eq!(v["path"], canonical);
+    assert_eq!(v["data"], "x");
+}

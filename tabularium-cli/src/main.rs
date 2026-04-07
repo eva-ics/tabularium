@@ -80,6 +80,15 @@ pub(crate) enum Command {
         #[arg(long)]
         raw: bool,
     },
+    /// Copy a file or directory (`cp SRC DST`; `-r` required for directories).
+    #[command(name = "cp")]
+    Cp {
+        /// Recursive copy (required for directory sources).
+        #[arg(short = 'r', long)]
+        recursive: bool,
+        src: String,
+        dst: String,
+    },
     /// Show or set the description on a file or directory (`tb desc PATH` prints; `tb desc PATH text…` sets; `tb desc PATH ""` clears).
     Desc {
         path: String,
@@ -404,5 +413,21 @@ mod cli_parse_tests {
             panic!("expected shell");
         };
         assert!(cwd.is_none());
+    }
+
+    #[test]
+    fn cp_parses_recursive_flag() {
+        let c = Cli::try_parse_from(["tb", "-u", "http://x", "cp", "-r", "a", "b"]).unwrap();
+        let Command::Cp {
+            recursive,
+            src,
+            dst,
+        } = c.command
+        else {
+            panic!("expected cp");
+        };
+        assert!(recursive);
+        assert_eq!(src, "a");
+        assert_eq!(dst, "b");
     }
 }

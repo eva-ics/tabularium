@@ -1046,6 +1046,13 @@ pub(crate) async fn execute(
         Command::Mv { src, dst } => {
             cmd_mv(client, &src, &dst).await?;
         }
+        Command::Cp {
+            recursive,
+            src,
+            dst,
+        } => {
+            cmd_cp(client, &src, &dst, recursive).await?;
+        }
         Command::Reindex { path } => {
             let path =
                 normalize_user_path(path.trim()).map_err(|e| -> BoxErr { e.to_string().into() })?;
@@ -1336,6 +1343,49 @@ async fn cmd_mv(client: &Client, src: &str, dst: &str) -> Result<(), BoxErr> {
     } else {
         client.move_directory(&src, &dp, &dn).await?;
     }
+    Ok(())
+}
+
+async fn resolve_cp_destination(
+    client: &Client,
+    src: &str,
+    dst_user: &str,
+) -> Result<String, BoxErr> {
+    let dst_into = dst_user.trim().ends_with('/');
+    let dst_trimmed = dst_user.trim();
+    let dst = if dst_trimmed == "/" {
+        "/".to_string()
+    } else {
+        normalize_user_path(dst_trimmed.trim_end_matches('/'))
+            .map_err(|e| -> BoxErr { e.to_string().into() })?
+    };
+    let (_, base) = tabularium::resource_path::parent_and_final_name(src)
+        .map_err(|e| -> BoxErr { e.to_string().into() })?;
+
+    if dst_into {
+        let resolved = join_abs_dir_entry(&dst, &base);
+        return Ok(resolved);
+    }
+    if client.list_directory(&dst).await.is_ok() {
+        let resolved = join_abs_dir_entry(&dst, &base);
+        return Ok(resolved);
+    }
+    Ok(dst)
+}
+
+async fn cmd_cp(
+    client: &Client,
+    src_user: &str,
+    dst_user: &str,
+    recursive: bool,
+) -> Result<(), BoxErr> {
+    let src = normalize_user_path(src_user.trim_end_matches('/'))
+        .map_err(|e| -> BoxErr { e.to_string().into() })?;
+    let dst = resolve_cp_destination(client, &src, dst_user).await?;
+    if dst == src || dst.starts_with(&format!("{}/", src.trim_end_matches('/'))) {
+        return Err("cp: cannot copy into itself".into());
+    }
+    client.cp(&src, &dst, recursive).await?;
     Ok(())
 }
 

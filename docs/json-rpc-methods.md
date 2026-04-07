@@ -17,7 +17,8 @@ Error `code` (baseline and Tabularium):
 
 Path rules:
 
-- **`path`** is absolute (`/…`) for directory and file operations, or a **single segment** where the server accepts a root-level name (see `create_directory`).
+- **`path`** may be rooted (`/a/b`) or unrooted (`a/b`); the server interprets both from Tabularium root and normalizes to a rooted canonical form internally.
+- Normalization: repeated slashes are collapsed; `.` is removed; `..` is resolved; escape above `/` is rejected.
 - **No `\`** anywhere in a path string (future Windows-compat).
 - Segment names: no `/` inside a segment, not pure decimal when used as a **name** (ids are decimal strings).
 
@@ -38,6 +39,7 @@ Path rules:
 | `touch_document` | `{ path, modified_at? }` — without `modified_at`: create empty file (with parent dirs) if missing, else bump `modified_at` only (content and `created_at` unchanged); with `modified_at` (nanoseconds since Unix epoch, same wire type as elsewhere): set exact `modified_at` on file or directory, creating an empty file first if missing |
 | `rename_document` | `{ path, new_name }` | `null` |
 | `move_document` | `{ path, new_path }` | `null` (`new_path` = destination **file** path) |
+| `copy_entries` | `{ src, dst, recursive? }` | `null` (`recursive: true` required for directory sources; if `dst` is an existing directory, copy into it using `basename(src)`; overwrite matches Unix `cp`) |
 | `get_document` / `cat` | `{ path }` | `{ id, path, content, created_at, modified_at, accessed_at, size_bytes }` |
 | `get_document_ref` | `{ path }` | metadata only (no `content`) |
 | `exists` | `{ path }` | `bool` |

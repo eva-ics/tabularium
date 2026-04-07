@@ -40,22 +40,34 @@ pub(crate) struct ShellSpawnContext {
 /// Clap subcommand names for `tb` (kebab-case), plus shell meta-commands (no `shell` inside shell).
 /// Keep sorted alphabetically per the project coding-rules scroll.
 const SUBCOMMANDS: &[&str] = &[
-    "?", "append", "cat", "cd", "chat", "clear", "desc", "edit", "exit", "export", "find", "grep",
-    "h", "head", "help", "import", "l", "less", "ll", "ls", "lt", "mkdir", "mv", "put", "q",
-    "quit", "reindex", "rm", "search", "slice", "stat", "tail", "test", "timeout", "touch", "wait",
-    "wc",
+    "?", "append", "cat", "cd", "chat", "clear", "cp", "desc", "edit", "exit", "export", "find",
+    "grep", "h", "head", "help", "import", "l", "less", "ll", "ls", "lt", "mkdir", "mv", "put",
+    "q", "quit", "reindex", "rm", "search", "slice", "stat", "tail", "test", "timeout", "touch",
+    "wait", "wc",
 ];
 
 /// Keep sorted alphabetically per the project coding-rules scroll.
 const PATH_FIRST: &[&str] = &[
-    "append", "cat", "chat", "desc", "edit", "head", "less", "mv", "put", "rm", "slice", "stat",
-    "tail", "touch", "wait", "wc",
+    "append", "cat", "chat", "cp", "desc", "edit", "head", "less", "mv", "put", "rm", "slice",
+    "stat", "tail", "touch", "wait", "wc",
 ];
+
+#[cfg(test)]
+mod cp_completion_tests {
+    use super::{PATH_FIRST, SUBCOMMANDS};
+
+    #[test]
+    fn test_shell_cp_autocomplete_entries() {
+        assert!(SUBCOMMANDS.contains(&"cp"));
+        assert!(PATH_FIRST.contains(&"cp"));
+    }
+}
 
 fn flags_for(sub: &str) -> &'static [&'static str] {
     match sub {
         "cat" | "slice" => &["--raw"],
         "chat" => &["-i", "--id", "--raw"],
+        "cp" => &["-r", "--recursive"],
         "export" => &["-d", "--destination"],
         "find" | "search" => &["-d", "--directory"],
         "grep" => &["-m", "-v", "--invert-match"],
@@ -1045,6 +1057,7 @@ fn should_invalidate_cache(cmd: &Command) -> bool {
             | Command::Chat { .. }
             | Command::Rm { .. }
             | Command::Mv { .. }
+            | Command::Cp { .. }
             | Command::Mkdir { .. }
             | Command::Touch { .. }
             | Command::Desc { .. }
@@ -1150,6 +1163,15 @@ pub(crate) fn apply_shell_cwd(cmd: Command, shell_cwd: Option<&str>) -> Result<C
         Command::Mv { src, dst } => Command::Mv {
             src: resolve_shell_doc_path(&src, shell_cwd)?,
             dst: resolve_shell_doc_path(&dst, shell_cwd)?,
+        },
+        Command::Cp {
+            recursive,
+            src,
+            dst,
+        } => Command::Cp {
+            recursive,
+            src: resolve_shell_tree_scope(&src, shell_cwd)?,
+            dst: resolve_shell_tree_scope(&dst, shell_cwd)?,
         },
         Command::Search { directory, query } => Command::Search {
             directory: match directory {
@@ -1750,7 +1772,57 @@ mod shell_cwd_tests {
             },
             Some("n"),
         );
-        assert!(matches!(c, Command::Cat { path, .. } if path == "x/doc"));
+        assert!(matches!(c, Command::Cat { path, .. } if path == "n/x/doc"));
+    }
+
+    #[test]
+    fn rm_multi_segment_uses_cwd() {
+        let c = unwrap_ac(
+            Command::Rm {
+                path: "chats/chat1".into(),
+                recursive: false,
+            },
+            Some("xxx"),
+        );
+        assert!(matches!(c, Command::Rm { path, .. } if path == "xxx/chats/chat1"));
+    }
+
+    #[test]
+    fn mv_src_multi_segment_uses_cwd() {
+        let c = unwrap_ac(
+            Command::Mv {
+                src: "subdir/file".into(),
+                dst: "target".into(),
+            },
+            Some("xxx"),
+        );
+        assert!(
+            matches!(c, Command::Mv { src, dst } if src == "xxx/subdir/file" && dst == "xxx/target")
+        );
+    }
+
+    #[test]
+    fn cat_multi_segment_uses_cwd() {
+        let c = unwrap_ac(
+            Command::Cat {
+                path: "subdir/doc".into(),
+                raw: false,
+            },
+            Some("xxx"),
+        );
+        assert!(matches!(c, Command::Cat { path, .. } if path == "xxx/subdir/doc"));
+    }
+
+    #[test]
+    fn put_multi_segment_uses_cwd() {
+        let c = unwrap_ac(
+            Command::Put {
+                path: "subdir/doc".into(),
+                file: None,
+            },
+            Some("xxx"),
+        );
+        assert!(matches!(c, Command::Put { path, .. } if path == "xxx/subdir/doc"));
     }
 
     #[test]

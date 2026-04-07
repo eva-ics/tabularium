@@ -7,7 +7,7 @@ use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use serde::{Deserialize, Deserializer};
 use serde_json::json;
-use tabularium::resource_path::normalize_user_path;
+use tabularium::resource_path::normalize_path_for_rpc;
 use tabularium::text_lines::{TailMode, apply_tail_logical_lines};
 use tabularium::{EntryId, Error, SqliteDatabase};
 use tokio::sync::watch as wait_cell;
@@ -68,7 +68,7 @@ pub async fn ws_upgrade(ws: WebSocketUpgrade, State(st): State<AppState>) -> imp
 }
 
 async fn resolve_did(db: &SqliteDatabase, path: &str) -> tabularium::Result<EntryId> {
-    let p = normalize_user_path(path)?;
+    let p = normalize_path_for_rpc(path)?;
     db.resolve_existing_file_path(&p).await
 }
 
@@ -98,7 +98,7 @@ async fn handle_client_text(
 
     match msg {
         ClientMsg::Subscribe { path, lines: tail } => {
-            let path = match normalize_user_path(&path) {
+            let path = match normalize_path_for_rpc(&path) {
                 Ok(x) => x,
                 Err(e) => return send_err(socket, e.to_string()).await,
             };
@@ -134,13 +134,17 @@ async fn handle_client_text(
             true
         }
         ClientMsg::Unsubscribe { path } => {
-            if active.as_ref().is_some_and(|s| s.path == path) {
+            let p = match normalize_path_for_rpc(&path) {
+                Ok(x) => x,
+                Err(e) => return send_err(socket, e.to_string()).await,
+            };
+            if active.as_ref().is_some_and(|s| s.path == p) {
                 *active = None;
             }
             true
         }
         ClientMsg::Append { path, data } => {
-            let p = match normalize_user_path(&path) {
+            let p = match normalize_path_for_rpc(&path) {
                 Ok(x) => x,
                 Err(e) => return send_err(socket, e.to_string()).await,
             };
@@ -161,7 +165,7 @@ async fn handle_client_text(
             from_id,
             data,
         } => {
-            let p = match normalize_user_path(&path) {
+            let p = match normalize_path_for_rpc(&path) {
                 Ok(x) => x,
                 Err(e) => return send_err(socket, e.to_string()).await,
             };
