@@ -104,10 +104,10 @@ jobs:
             --sums "dist/SHA256SUMS-${{ matrix.target }}.txt" \
             --out dist/tabularium.rb
 
-      - name: Commit generated formula to feat/brew_installation
+      - name: Commit generated formula to main
         if: matrix.target == 'aarch64-apple-darwin' && startsWith(github.ref, 'refs/tags/v')
         env:
-          TARGET_BRANCH: feat/brew_installation
+          TARGET_BRANCH: main
         run: |
           set -euo pipefail
 
