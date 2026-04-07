@@ -60,6 +60,8 @@ just tb search tabularium
 brew install eva-ics/tabularium/tabularium
 ```
 
+Apple Silicon only (`arm64` / `aarch64-apple-darwin`). Intel macOS (`x86_64-apple-darwin`) artifacts are not published yet.
+
 This installs:
 
 - `tabularium-server` as a Homebrew service target
