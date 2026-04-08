@@ -6,11 +6,21 @@ class Tabularium < Formula
 
   on_macos do
     url "https://github.com/eva-ics/tabularium/releases/download/v0.1.3/tb-v0.1.3-aarch64-apple-darwin.tar.gz"
-    sha256 "9ec00250ac873ef7ae5119728bedbc7d3333f0f38b5ed4f7f01cc1d00c59e975"
+    sha256 "df63d981f2be6450201abf5e560c3f0d03d51c3a4950cdd8f92a7830fa3dbcb0"
 
     resource "tabularium-server-bin" do
       url "https://github.com/eva-ics/tabularium/releases/download/v0.1.3/tabularium-server-v0.1.3-aarch64-apple-darwin.tar.gz"
-      sha256 "1e1a3d0f70fe666151545e4b51805155787e6598736e233d49007beeefcc464c"
+      sha256 "2babbc41aaf6593aca03496d337976ab895943f27694be15a9567e2c7fc77e68"
+    end
+  end
+
+  on_linux do
+    url "https://github.com/eva-ics/tabularium/releases/download/v0.1.3/tb-v0.1.3-x86_64-unknown-linux-gnu.tar.gz"
+    sha256 "c0553e29f956f0490338a411112a877947c61249ea124d0dde264630c1a4ffc3"
+
+    resource "tabularium-server-bin" do
+      url "https://github.com/eva-ics/tabularium/releases/download/v0.1.3/tabularium-server-v0.1.3-x86_64-unknown-linux-gnu.tar.gz"
+      sha256 "a78cccdcd4a38e828a15110f1b0352be4d22e4062f2018b99e6b55e086c28c2a"
     end
   end
 
