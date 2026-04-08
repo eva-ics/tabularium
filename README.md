@@ -54,7 +54,7 @@ just tb search tabularium
 
 `just run` uses `config.toml` when present and falls back to `config.toml.example` for a fresh clone.
 
-## Install (Homebrew)
+## Install (Homebrew, not ready yet)
 
 ```bash
 brew install eva-ics/tabularium/tabularium
