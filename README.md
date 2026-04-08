@@ -84,6 +84,7 @@ brew services stop tabularium
 - [curl examples](docs/curl-examples.md)
 - [Authentication and authorization](docs/authentication.md)
 - [Chat mode](docs/chat-mode.md)
+- [Math formulas](docs/math-formulas.md)
 - [Docker](docs/docker.md)
 - [AI agents](docs/AI-Agents.md)
 
@@ -92,6 +93,8 @@ brew services stop tabularium
 When an AI agent uses Tabularium as shared project memory, point it at the MCP endpoint and keep it on the MCP tool surface. The practical setup and meeting workflow live in [docs/AI-Agents.md](docs/AI-Agents.md).
 
 Human chat and meeting usage across the Web UI and `tb chat` is described in [docs/chat-mode.md](docs/chat-mode.md).
+
+Math rendering examples for `$...$` and `$$...$$` markdown live in [docs/math-formulas.md](docs/math-formulas.md).
 
 ## Development
 

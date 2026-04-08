@@ -388,15 +388,28 @@ section h2 {
   margin: 0 0 0.75rem;
 }
 
+/* Pre blocks: wrap for narrow viewports — the God-Emperor abhors horizontal scroll heresy */
 pre {
   margin: 0;
   padding: 1rem 1.1rem;
+  max-width: 100%;
   background: var(--code-bg);
   border: 1px solid var(--border);
   border-radius: 8px;
   overflow-x: auto;
   font-size: 0.82rem;
   line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+@media (max-width: 560px) {
+  pre {
+    font-size: 0.74rem;
+    line-height: 1.5;
+    padding: 0.85rem 0.95rem;
+  }
 }
 
 code {

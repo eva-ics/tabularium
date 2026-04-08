@@ -61,8 +61,8 @@ const katexAttributePatch: NonNullable<Schema["attributes"]> = {
   span: [
     "style",
     "ariaHidden",
-    // KaTeX uses many short internal class names (e.g. `mord`, `strut`, `vlist-t`).
-    ["className", /^[a-zA-Z0-9_-]+$/],
+    // KaTeX uses hyphens (`katex-error`) and digits (`size11`); `-` must be literal, not a range.
+    ["className", /^[-a-zA-Z0-9_]+$/],
   ],
   math: ["xmlns"],
   svg: [

@@ -77,6 +77,11 @@ fn resolve_create_directory_body(body: &CreateDirectoryBody) -> tabularium::Resu
     match (&body.path, &body.name) {
         (Some(p), _) => {
             let t = p.trim();
+            if t.contains("//") {
+                return Err(Error::InvalidInput(
+                    "path must not contain empty segment (//)".into(),
+                ));
+            }
             normalize_path_for_rpc(t)
         }
         (_, Some(n)) => {

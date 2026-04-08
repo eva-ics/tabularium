@@ -11,3 +11,5 @@ This server speaks the same JSON-RPC vocabulary as POST /rpc (see tool `methods`
 For agents and tools: do **not** prefix the nickname into `content` (e.g. don't start with `## Name`). Provide the nickname via **from_id** only; the server writes the header automatically.
 
 The default document format is markdown.
+
+For mathematics, Latex formulas allowed as $inline$ or $$block$$

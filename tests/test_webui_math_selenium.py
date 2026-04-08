@@ -5,6 +5,7 @@ Prerequisites: TABULARIUM_TEST_URL → http://10.90.1.122:<port> (AGENTS.md).
 
 from __future__ import annotations
 
+import re
 import uuid
 
 import pytest
@@ -110,12 +111,23 @@ def test_math_m02_invalid_formula_degrades_not_empty(
         "Broken:\n\n$$\\foo$$\n",
     )
     _open_math_doc(selenium_driver, tabularium_base_url, math_seed_dir, "m02.md")
-    pane = _wait(selenium_driver).until(
+    _wait(selenium_driver).until(
         EC.presence_of_element_located(
-            (By.CSS_SELECTOR, "[data-testid='preview-pane']"),
+            (By.CSS_SELECTOR, "[data-testid='preview-pane'] .markdown .katex"),
         ),
     )
-    assert pane.find_elements(By.CSS_SELECTOR, ".markdown .katex-error")
+    pane = selenium_driver.find_element(
+        By.CSS_SELECTOR,
+        "[data-testid='preview-pane']",
+    )
+    html = pane.get_attribute("innerHTML") or ""
+    # KaTeX ≥0.16: undefined macros often render as red `.katex` text, not `.katex-error`.
+    assert pane.find_elements(By.CSS_SELECTOR, ".markdown .katex")
+    hl = html.lower()
+    assert "katex-error" in html or "#cc0000" in hl or re.search(
+        r"rgb\s*\(\s*204\s*,\s*0\s*,\s*0\s*\)",
+        hl,
+    )
     body = pane.text.strip()
     assert len(body) > 10
     assert "Select a file" not in body
@@ -190,4 +202,5 @@ def test_math_m05_no_xss_from_formula_markup(
     assert not md.find_elements(By.TAG_NAME, "script")
     html = (md.get_attribute("innerHTML") or "").lower()
     assert "javascript:" not in html
-    assert "onerror=" not in html
+    # Safe MathML/text can still contain the substring `onerror=` inside escaped text — forbid real tags only.
+    assert not re.search(r"<img\b[^>]*\bonerror\s*=", html, re.IGNORECASE)

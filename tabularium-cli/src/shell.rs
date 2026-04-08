@@ -67,7 +67,7 @@ fn flags_for(sub: &str) -> &'static [&'static str] {
     match sub {
         "cat" | "slice" => &["--raw"],
         "chat" => &["-i", "--id", "--raw"],
-        "cp" => &["-r", "--recursive"],
+        "cp" | "rm" => &["-r", "--recursive"],
         "export" => &["-d", "--destination"],
         "find" | "search" => &["-d", "--directory"],
         "grep" => &["-m", "-v", "--invert-match"],
@@ -76,7 +76,6 @@ fn flags_for(sub: &str) -> &'static [&'static str] {
         "l" | "ll" | "ls" => &["-t", "--time", "-r", "--reverse"],
         "lt" => &["-r", "--reverse"],
         "mkdir" => &["--description", "-p", "--parents"],
-        "rm" => &["-r", "--recursive"],
         "tail" => &["-n", "-f", "--follow", "--raw"],
         _ => &[],
     }
