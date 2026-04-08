@@ -57,7 +57,10 @@ just tb search tabularium
 ## Install (Homebrew)
 
 ```bash
-brew install eva-ics/tabularium/tabularium
+# add tap
+brew tap eva-ics/tabularium https://github.com/eva-ics/tabularium
+# install
+brew install tabularium
 ```
 
 Apple Silicon only (`arm64` / `aarch64-apple-darwin`). Intel macOS (`x86_64-apple-darwin`) artifacts are not published yet.
