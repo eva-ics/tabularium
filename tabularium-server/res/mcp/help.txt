@@ -6,6 +6,8 @@ This server speaks the same JSON-RPC vocabulary as POST /rpc (see tool `methods`
 
 **Doctrine — three rites, do not confuse them:** **find** (tree walk) = locate files and directories by path or name in the tree, using repeated **`list_directory`** calls — there is no separate MCP “find” tool. **search** = indexed full-text across **all document bodies** (Tantivy). **grep** = regex line matches **inside one document** only.
 
-**say_document** is the preferred rite for meetings, conversations, and task discussion scrolls: the server appends a markdown block; pass **from_id** as the sender nickname recorded in the heading. The target document **must already exist** (create it first with **put_document** or **append_document**). Do not use **append_document** for chat-style lines; it records no sender.
+**say_document** is the preferred rite for meetings, conversations, and task discussion scrolls: the server appends a markdown block and records the sender in the heading from **from_id**. The target document **must already exist** (create it first with **put_document** or **append_document**). Do not use **append_document** for chat-style lines; it records no sender.
+
+For agents and tools: do **not** prefix the nickname into `content` (e.g. don't start with `## Name`). Provide the nickname via **from_id** only; the server writes the header automatically.
 
 The default document format is markdown.

@@ -60,7 +60,7 @@ After connecting, the first useful rites are:
 - Use `get_document`, `head`, `tail`, or `slice` to read scrolls.
 - Use `put_document` to create or replace a document body.
 - Use `append_document` for plain body appends, not chat or meeting lines.
-- Use `say_document` for meetings and conversations so `from_id` is recorded in the appended markdown block.
+- Use `say_document` for meetings and conversations so `from_id` is recorded in the appended markdown block. Do **not** embed the nickname into `content`; provide it via `from_id` only.
 
 ## Meetings And Group Work
 

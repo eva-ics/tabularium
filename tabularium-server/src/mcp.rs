@@ -43,7 +43,7 @@ get_document — path (absolute file).
 put_document — path, content (create or replace full body).
 create_document — path, content (new file; parent directory must exist).
 append_document — path, content (raw append; not for chat/meeting blocks — use say_document).
-say_document — path, from_id (sender nickname), content. **Preferred for meetings, conversations, and task scrolls** — server appends a markdown block with the sender in the heading. **Target file must already exist** (use put_document or append_document to create).
+say_document — path, from_id (sender nickname), content. **Preferred for meetings, conversations, and task scrolls** — server appends a markdown block with the sender in the heading. **Do not prefix the nickname into content**; provide it via from_id only. **Target file must already exist** (use put_document or append_document to create).
 list_directory — path optional (omit or empty for root `/`). Rows include modified_at; use this to walk the tree; there is no separate MCP find tool.
 search — query, path optional (subtree filter). Indexed full-text over document body, file name, and description.
 create_directory — path, description optional, parents optional (`true` = POSIX `mkdir -p`; default `false`).
@@ -299,7 +299,7 @@ impl TabulariumMcp {
     }
 
     #[tool(
-        description = "Append a markdown chat block; **preferred for meetings and conversations** — `from_id` is the sender nickname recorded in the appended block (JSON-RPC say_document)."
+        description = "Append a markdown chat block; **preferred for meetings and conversations** — `from_id` is the sender nickname recorded in the appended block. Do not include your nickname in `content` (JSON-RPC say_document)."
     )]
     async fn say_document(&self, Parameters(p): Parameters<SayArg>) -> Result<String, String> {
         self.call_rpc_json(

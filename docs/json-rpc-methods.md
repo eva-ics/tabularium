@@ -35,7 +35,7 @@ Path rules:
 | `delete_document` | `{ path }` | `null` |
 | `update_document` / `replace_document` | `{ path, content }` | `null` |
 | `append_document` | `{ path, content }` | `null` (creates file and parent dirs if missing) |
-| `say_document` | `{ path, from_id, content }` | `null` — **file must already exist** (`-32602` / `InvalidInput` with `say_document: document does not exist…`; use `append_document` or `put_document` to create) |
+| `say_document` | `{ path, from_id, content }` | `null` — appends a chat-style markdown block with `from_id` as the heading; **do not** include the nickname in `content`. **File must already exist** (`-32602` / `InvalidInput` with `say_document: document does not exist…`; use `append_document` or `put_document` to create) |
 | `touch_document` | `{ path, modified_at? }` — without `modified_at`: create empty file (with parent dirs) if missing, else bump `modified_at` only (content and `created_at` unchanged); with `modified_at` (nanoseconds since Unix epoch, same wire type as elsewhere): set exact `modified_at` on file or directory, creating an empty file first if missing |
 | `rename_document` | `{ path, new_name }` | `null` |
 | `move_document` | `{ path, new_path }` | `null` (`new_path` = destination **file** path) |

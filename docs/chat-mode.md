@@ -8,6 +8,8 @@ Tabularium chat mode is a live view over one markdown document. Each sent messag
 message body
 ```
 
+When you use `say_document` through JSON-RPC or MCP, the nickname is taken from `from_id` and written into the `## ...` header by the server. Do **not** include your own nickname header inside the message body.
+
 That means chat is not a separate storage system. The transcript is the document body, so the same file can still be previewed, edited, searched, exported, or read through RPC/MCP.
 
 Typical uses are meeting scrolls, operator notes, and lightweight human or machine-spirit conversations.
