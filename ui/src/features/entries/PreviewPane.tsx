@@ -10,8 +10,6 @@ import {
 } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
-import remarkGfm from "remark-gfm";
-import { defaultSchema } from "hast-util-sanitize";
 import type { Schema } from "hast-util-sanitize";
 import { useNavigate } from "react-router-dom";
 import { getDocument, putDocument } from "../../api/client";
@@ -22,22 +20,23 @@ import {
   rehypeSearchHighlight,
   splitPlainTextForPreview,
 } from "./highlightSearchTerms";
+import { gfmTableKatexSanitizeSchema } from "../../markdown/gfmSanitize";
 import {
-  extendSchemaWithGfmTables,
-  gfmTableSanitizeSchema,
-} from "../../markdown/gfmSanitize";
+  markdownRemarkPlugins,
+  rehypeKatex,
+} from "../../markdown/mathMarkdown";
 import { parentPath } from "./entryModel";
 import { withOpenDocQuery } from "./entriesPath";
 import styles from "./PreviewPane.module.scss";
 
-const sanitizeWithMark: Schema = extendSchemaWithGfmTables({
-  ...gfmTableSanitizeSchema,
-  tagNames: [...(gfmTableSanitizeSchema.tagNames ?? []), "mark"],
+const sanitizeWithMark: Schema = {
+  ...gfmTableKatexSanitizeSchema,
+  tagNames: [...(gfmTableKatexSanitizeSchema.tagNames ?? []), "mark"],
   attributes: {
-    ...defaultSchema.attributes,
+    ...gfmTableKatexSanitizeSchema.attributes,
     mark: ["className", "class"],
   },
-});
+};
 
 export interface EditSessionState {
   active: boolean;
@@ -102,13 +101,16 @@ export const PreviewPane = forwardRef<HTMLDivElement, PreviewPaneProps>(
     const highlightActive = highlightTrimmed.length >= 2;
 
     const rehypePlugins = useMemo(() => {
+      const schema = highlightActive
+        ? sanitizeWithMark
+        : gfmTableKatexSanitizeSchema;
       const sanitize: [typeof rehypeSanitize, Schema] = [
         rehypeSanitize,
-        highlightActive ? sanitizeWithMark : gfmTableSanitizeSchema,
+        schema,
       ];
       return highlightActive
-        ? [rehypeSearchHighlight(highlightTrimmed), sanitize]
-        : [sanitize];
+        ? [rehypeSearchHighlight(highlightTrimmed), rehypeKatex, sanitize]
+        : [rehypeKatex, sanitize];
     }, [highlightActive, highlightTrimmed]);
 
     const rawTerms = useMemo(
@@ -131,7 +133,9 @@ export const PreviewPane = forwardRef<HTMLDivElement, PreviewPaneProps>(
     }, [pathLabel]);
 
     const resolveHref = useCallback(
-      (hrefRaw: string): { kind: "passthrough" } | { kind: "navigate"; url: string } => {
+      (
+        hrefRaw: string,
+      ): { kind: "passthrough" } | { kind: "navigate"; url: string } => {
         const href = hrefRaw.trim();
         if (href === "") {
           return { kind: "passthrough" };
@@ -150,7 +154,8 @@ export const PreviewPane = forwardRef<HTMLDivElement, PreviewPaneProps>(
         }
 
         const [pathPart, hashPart] = href.split("#", 2);
-        const hashSuffix = hashPart != null && hashPart !== "" ? `#${hashPart}` : "";
+        const hashSuffix =
+          hashPart != null && hashPart !== "" ? `#${hashPart}` : "";
         const decodedPath = (() => {
           try {
             return decodeURIComponent(pathPart);
@@ -180,7 +185,9 @@ export const PreviewPane = forwardRef<HTMLDivElement, PreviewPaneProps>(
         const baseDir = openDocDir ?? "/";
         const targetAbs = decodedPath.startsWith("/")
           ? normalizeAbs(decodedPath)
-          : normalizeAbs(baseDir === "/" ? `/${decodedPath}` : `${baseDir}/${decodedPath}`);
+          : normalizeAbs(
+              baseDir === "/" ? `/${decodedPath}` : `${baseDir}/${decodedPath}`,
+            );
 
         const targetDir = parentPath(targetAbs);
         const url = `${withOpenDocQuery(targetDir, targetAbs)}${hashSuffix}`;
@@ -461,7 +468,7 @@ export const PreviewPane = forwardRef<HTMLDivElement, PreviewPaneProps>(
           {showPreviewBody && !rawMode ? (
             <div className={`${styles.markdown} markdown`}>
               <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
+                remarkPlugins={markdownRemarkPlugins}
                 rehypePlugins={rehypePlugins}
                 components={markdownComponents}
               >
