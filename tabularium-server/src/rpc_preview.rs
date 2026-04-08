@@ -62,13 +62,36 @@ fn append_value(v: &Value, out: &mut String, clip: usize, cap: usize) {
     }
 }
 
+/// Collapses runs of CR/LF (`\r`, `\n`, and mixtures) into at most one ASCII space (log hygiene only).
+fn sanitize_newlines_for_log(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut pending_space = false;
+    for ch in s.chars() {
+        if ch == '\r' || ch == '\n' {
+            pending_space = true;
+        } else {
+            if pending_space {
+                if !out.is_empty() && !out.ends_with(' ') {
+                    out.push(' ');
+                }
+                pending_space = false;
+            }
+            out.push(ch);
+        }
+    }
+    if pending_space && !out.is_empty() && !out.ends_with(' ') {
+        out.push(' ');
+    }
+    out
+}
+
 fn append_str(s: &str, out: &mut String, clip: usize, cap: usize) {
     let budget = cap.saturating_sub(out.len());
     if budget <= 3 {
         return;
     }
     let n = s.chars().count();
-    let shown: String = s.chars().take(clip).collect();
+    let shown = sanitize_newlines_for_log(&s.chars().take(clip).collect::<String>());
     let mut piece = if n > clip {
         format!("{}…({n} chars)", shown)
     } else {
@@ -81,4 +104,66 @@ fn append_str(s: &str, out: &mut String, clip: usize, cap: usize) {
         piece.push('…');
     }
     out.push_str(&piece);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::{Value, json};
+
+    #[test]
+    fn preview_replaces_embedded_newlines_with_space() {
+        let v = json!({ "p": "a\nb" });
+        let s = format_rpc_params_preview(Some(&v));
+        assert!(!s.contains(['\r', '\n']));
+        assert_eq!(s, "{p:a b}");
+    }
+
+    #[test]
+    fn preview_replaces_crlf() {
+        let v = json!({ "p": "a\r\nb" });
+        let s = format_rpc_params_preview(Some(&v));
+        assert!(!s.contains(['\r', '\n']));
+        assert_eq!(s, "{p:a b}");
+    }
+
+    #[test]
+    fn preview_replaces_lone_cr() {
+        let v = json!({ "p": "a\rb" });
+        let s = format_rpc_params_preview(Some(&v));
+        assert!(!s.contains(['\r', '\n']));
+        assert_eq!(s, "{p:a b}");
+    }
+
+    #[test]
+    fn preview_replaces_nr_mixture() {
+        let v = json!({ "p": "a\n\rb" });
+        let s = format_rpc_params_preview(Some(&v));
+        assert!(!s.contains(['\r', '\n']));
+        assert_eq!(s, "{p:a b}");
+    }
+
+    #[test]
+    fn preview_truncates_then_sanitizes_no_raw_newline_in_logged_prefix() {
+        let xs = "x".repeat(55);
+        let s_body = format!("{xs}\ny");
+        assert!(s_body.chars().count() > STR_CLIP_CHARS);
+        let v = json!({ "p": s_body });
+        let s = format_rpc_params_preview(Some(&v));
+        assert!(!s.contains(['\r', '\n']));
+        assert!(s.contains('…'));
+        assert!(s.contains(" chars)"));
+    }
+
+    #[test]
+    fn preview_respects_output_cap() {
+        let mut m = serde_json::Map::new();
+        for i in 0..80 {
+            m.insert(format!("k{i}"), Value::String("v".into()));
+        }
+        let v = Value::Object(m);
+        let s = format_rpc_params_preview(Some(&v));
+        assert!(!s.contains(['\r', '\n']));
+        assert!(s.len() <= OUTPUT_CAP, "len {}", s.len());
+    }
 }
