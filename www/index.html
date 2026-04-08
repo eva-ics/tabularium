@@ -160,11 +160,14 @@ docker run --rm \
           </div>
           <div class="quickstart card">
             <h3>macOS (Homebrew)</h3>
-            <pre><code>brew install eva-ics/tabularium/tabularium</code></pre>
+            <pre><code># add tap
+brew tap eva-ics/tabularium https://github.com/eva-ics/tabularium
+# install
+brew install tabularium</code></pre>
             <p class="muted" style="margin-top: 0.75rem">
-              Apple Silicon only (<span class="mono">arm64</span>). Start the server with
-              <span class="mono">brew services start tabularium</span> and stop with
-              <span class="mono">brew services stop tabularium</span>. <span class="mono">tb</span> is installed as a normal CLI binary.
+              Apple Silicon only (<span class="mono">arm64</span> / <span class="mono">aarch64-apple-darwin</span>). Intel macOS binaries are not published yet. Installs
+              <span class="mono">tabularium-server</span> as a Homebrew service and <span class="mono">tb</span> as a CLI binary. Start with
+              <span class="mono">brew services start tabularium</span> and stop with <span class="mono">brew services stop tabularium</span>.
             </p>
           </div>
         </div>
