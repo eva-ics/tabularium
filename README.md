@@ -1,14 +1,8 @@
-<h2>
-  Tabularium - markdown document assembly
-  <a href="https://crates.io/crates/tabularium"><img alt="crates.io page" src="https://img.shields.io/crates/v/tabularium.svg"></img></a>
-  <a href="https://docs.rs/tabularium"><img alt="docs.rs page" src="https://docs.rs/tabularium/badge.svg"></img></a>
-</h2>
+## Tabularium - markdown document assembly
 
 Tabularium is an AI-oriented markdown document store with full-text
 search, a real directory tree, and several ways to work with the same data: web
 UI, CLI, REST, JSON-RPC, MCP, or the Rust library.
-
-<img src="https://raw.githubusercontent.com/eva-ics/tabularium/main/ss/webui-d.png" width="800" />
 
 ## What It Does
 
@@ -57,7 +51,10 @@ just tb search tabularium
 ## Install (Homebrew)
 
 ```bash
-brew install eva-ics/tabularium/tabularium
+# add tap
+brew tap eva-ics/tabularium https://github.com/eva-ics/tabularium
+# install
+brew install tabularium
 ```
 
 Apple Silicon only (`arm64` / `aarch64-apple-darwin`). Intel macOS (`x86_64-apple-darwin`) artifacts are not published yet.
