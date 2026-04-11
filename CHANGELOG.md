@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.5 - 2026-04-11
+
+Web UI workflow and rendering release.
+
+- Adds Web UI entry management for creating files and folders, editing
+  descriptions, simple same-parent renames, and confirmed deletes.
+- Adds KaTeX-based math rendering for markdown preview and chat views, plus
+  docs and tests for inline and block formulas.
+- Improves print-friendly Web UI layouts, CLI chat scrolling behavior, and RPC log sanitization.
+
 ## 0.1.4 - 2026-04-08
 
 Web UI and packaging release.
