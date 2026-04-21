@@ -22,7 +22,7 @@ use tabularium::rpc::Client;
 use tokio::runtime::Handle;
 
 use crate::execute::{
-    ExecuteContext, ExecuteOutcome, ShellChildRpc, execute, execute_opts_from_command,
+    ExecuteContext, ExecuteOutcome, ShellChildRpc, cmd_mcd, execute, execute_opts_from_command,
     join_abs_dir_entry,
 };
 use crate::shell_path::{
@@ -40,16 +40,16 @@ pub(crate) struct ShellSpawnContext {
 /// Clap subcommand names for `tb` (kebab-case), plus shell meta-commands (no `shell` inside shell).
 /// Keep sorted alphabetically per the project coding-rules scroll.
 const SUBCOMMANDS: &[&str] = &[
-    "?", "append", "cat", "cd", "chat", "clear", "cp", "desc", "edit", "exit", "export", "find",
-    "grep", "h", "head", "help", "import", "l", "less", "ll", "ls", "lt", "mkdir", "mv", "put",
-    "q", "quit", "reindex", "rm", "search", "slice", "stat", "tail", "test", "timeout", "touch",
-    "wait", "wc",
+    "?", "append", "cat", "cd", "chat", "clear", "cp", "desc", "ec", "edit", "exit", "export",
+    "find", "grep", "h", "head", "help", "import", "l", "less", "ll", "ls", "lt", "mkdir", "mcd",
+    "mv", "put", "q", "quit", "reindex", "rm", "search", "slice", "stat", "tail", "test",
+    "timeout", "touch", "wait", "wc",
 ];
 
 /// Keep sorted alphabetically per the project coding-rules scroll.
 const PATH_FIRST: &[&str] = &[
-    "append", "cat", "chat", "cp", "desc", "edit", "head", "less", "mv", "put", "rm", "slice",
-    "stat", "tail", "touch", "wait", "wc",
+    "append", "cat", "chat", "cp", "desc", "ec", "edit", "head", "less", "mv", "put", "rm",
+    "slice", "stat", "tail", "touch", "wait", "wc",
 ];
 
 #[cfg(test)]
@@ -76,6 +76,7 @@ fn flags_for(sub: &str) -> &'static [&'static str] {
         "l" | "ll" | "ls" => &["-t", "--time", "-r", "--reverse"],
         "lt" => &["-r", "--reverse"],
         "mkdir" => &["--description", "-p", "--parents"],
+        "shell" => &["-p", "--parents"],
         "tail" => &["-n", "-f", "--follow", "--raw"],
         _ => &[],
     }
@@ -755,6 +756,14 @@ impl Completer for TbHelper {
                 p.extend(self.complete_path_filtered(&mut state, "", true));
                 return Ok((pos, p));
             }
+            if sub == "mcd" {
+                let mut p = vec![Pair {
+                    display: "/".into(),
+                    replacement: "/ ".into(),
+                }];
+                p.extend(self.complete_path_filtered(&mut state, "", true));
+                return Ok((pos, p));
+            }
             if sub == "import" {
                 let mut p = vec![Pair {
                     display: "/".into(),
@@ -803,6 +812,19 @@ impl Completer for TbHelper {
 
         // `cd <partial>`
         if sub == "cd" && words.len() == 2 && !ends_with_space {
+            let w = words[1];
+            let mut p = vec![];
+            if "/".starts_with(w) {
+                p.push(Pair {
+                    display: "/".into(),
+                    replacement: "/ ".into(),
+                });
+            }
+            p.extend(self.complete_path_filtered(&mut state, w, true));
+            return Ok((start, p));
+        }
+
+        if sub == "mcd" && words.len() == 2 && !ends_with_space {
             let w = words[1];
             let mut p = vec![];
             if "/".starts_with(w) {
@@ -1060,6 +1082,7 @@ fn should_invalidate_cache(cmd: &Command) -> bool {
             | Command::Mkdir { .. }
             | Command::Touch { .. }
             | Command::Desc { .. }
+            | Command::Ec { .. }
     )
 }
 
@@ -1091,6 +1114,9 @@ pub(crate) fn apply_shell_cwd(cmd: Command, shell_cwd: Option<&str>) -> Result<C
         Command::Desc { path, description } => Command::Desc {
             path: resolve_shell_doc_path(&path, shell_cwd)?,
             description,
+        },
+        Command::Ec { path } => Command::Ec {
+            path: resolve_shell_doc_path(&path, shell_cwd)?,
         },
         Command::Put { path, file } => Command::Put {
             path: resolve_shell_doc_path(&path, shell_cwd)?,
@@ -1222,7 +1248,8 @@ pub(crate) fn apply_shell_cwd(cmd: Command, shell_cwd: Option<&str>) -> Result<C
             path: resolve_shell_tree_scope(&path, shell_cwd)?,
         },
         Command::Test => Command::Test,
-        Command::Shell { cwd } => Command::Shell {
+        Command::Shell { parents, cwd } => Command::Shell {
+            parents,
             cwd: match cwd {
                 None => None,
                 Some(p) => {
@@ -1307,6 +1334,52 @@ fn handle_shell_cd(
     }
 }
 
+fn handle_shell_mcd(
+    client: &Arc<Mutex<Client>>,
+    handle: &Handle,
+    state: &Arc<Mutex<CompletionState>>,
+    trimmed: &str,
+) -> Result<(), String> {
+    let words: Vec<String> =
+        shell_words::split(trimmed).map_err(|_| "mcd: unmatched quote".to_string())?;
+    if words.first().map(String::as_str) != Some("mcd") {
+        return Err("internal: expected mcd".into());
+    }
+    if words.len() == 1 {
+        return Err("mcd: missing operand".into());
+    }
+    if words.len() > 2 {
+        return Err("mcd: too many arguments".into());
+    }
+    let target = words[1].as_str();
+    let cwd_snapshot = {
+        let g = state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        g.cwd.clone()
+    };
+    let merged = merge_cd_path(target, cwd_snapshot.as_deref())?;
+    let path_norm = normalize_user_path(merged.trim()).map_err(|e| format!("mcd: {e}"))?;
+    {
+        let c = client
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        handle
+            .block_on(cmd_mcd(&c, &path_norm))
+            .map_err(|e| e.to_string())?;
+    }
+    let mut g = state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if path_norm == "/" {
+        g.cwd = None;
+    } else {
+        g.cwd = Some(path_norm.trim_start_matches('/').to_string());
+    }
+    g.invalidate_all();
+    Ok(())
+}
+
 fn handle_shell_timeout(
     words: &[String],
     client: &Arc<Mutex<Client>>,
@@ -1361,12 +1434,16 @@ fn install_initial_shell_cwd(
     handle: &Handle,
     state: &Arc<Mutex<CompletionState>>,
     cwd: Option<String>,
+    parents: bool,
 ) -> Result<(), BoxErr> {
     let Some(s) = cwd else {
         return Ok(());
     };
     let t = s.trim();
     if t.is_empty() {
+        if parents {
+            return Err("shell: -p/--parents requires a non-empty directory path".into());
+        }
         return Ok(());
     }
     let path = merge_cd_path(t, None).map_err(|e| -> BoxErr {
@@ -1379,6 +1456,11 @@ fn install_initial_shell_cwd(
     let c = client
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if parents && path != "/" {
+        handle
+            .block_on(c.create_directory(&path, None, true))
+            .map_err(|e| -> BoxErr { format!("shell: {e}").into() })?;
+    }
     handle
         .block_on(c.list_directory(&path))
         .map_err(|e| -> BoxErr { format!("shell: not a directory or inaccessible: {e}").into() })?;
@@ -1472,10 +1554,11 @@ fn run_shell_blocking(
     api_uri: String,
     timeout_sec: u64,
     initial_cwd: Option<String>,
+    initial_parents: bool,
     spawn_ctx: ShellSpawnContext,
 ) -> Result<(), BoxErr> {
     let state = Arc::new(Mutex::new(CompletionState::default()));
-    install_initial_shell_cwd(&client, &handle, &state, initial_cwd)?;
+    install_initial_shell_cwd(&client, &handle, &state, initial_cwd, initial_parents)?;
     let timeout_sec = timeout_sec.max(1);
     let mut shell_child_rpc =
         ShellChildRpc::new(api_uri.clone(), timeout_sec, spawn_ctx.header_flags);
@@ -1526,6 +1609,19 @@ fn run_shell_blocking(
 
                 if trimmed.split_whitespace().next() == Some("cd") {
                     match handle_shell_cd(&client, &handle, &state, trimmed) {
+                        Ok(()) => {
+                            push_history(&mut rl, &history_path, trimmed)?;
+                        }
+                        Err(e) => {
+                            eprintln!("{e}");
+                            push_history(&mut rl, &history_path, trimmed)?;
+                        }
+                    }
+                    continue;
+                }
+
+                if trimmed.split_whitespace().next() == Some("mcd") {
+                    match handle_shell_mcd(&client, &handle, &state, trimmed) {
                         Ok(()) => {
                             push_history(&mut rl, &history_path, trimmed)?;
                         }
@@ -1602,7 +1698,7 @@ fn run_shell_blocking(
                     }
                 };
 
-                if matches!(cmd, Command::Edit { .. }) {
+                if matches!(cmd, Command::Edit { .. } | Command::Ec { .. }) {
                     push_history(&mut rl, &history_path, trimmed)?;
                     drop(rl);
                     let exec_opts = execute_opts_from_command(&cmd);
@@ -1679,6 +1775,7 @@ pub(crate) async fn run_shell(
     api_uri: String,
     timeout_sec: u64,
     initial_cwd: Option<String>,
+    initial_parents: bool,
     spawn_ctx: ShellSpawnContext,
 ) -> Result<(), BoxErr> {
     if !io::stdin().is_terminal() {
@@ -1698,6 +1795,7 @@ pub(crate) async fn run_shell(
             api_uri,
             timeout_sec,
             initial_cwd,
+            initial_parents,
             spawn_ctx,
         )
     })
@@ -1969,6 +2067,7 @@ mod shell_cwd_tests {
             ),
             (Command::Stat { path: "d".into() }, "c/d"),
             (Command::Wc { path: "d".into() }, "c/d"),
+            (Command::Ec { path: "d".into() }, "c/d"),
             (Command::Edit { path: "d".into() }, "c/d"),
             (Command::Wait { path: "d".into() }, "c/d"),
             (Command::Less { path: "d".into() }, "c/d"),
@@ -1989,6 +2088,7 @@ mod shell_cwd_tests {
             | Command::Slice { path: p, .. }
             | Command::Stat { path: p }
             | Command::Wc { path: p }
+            | Command::Ec { path: p }
             | Command::Edit { path: p }
             | Command::Wait { path: p }
             | Command::Less { path: p }
@@ -1998,6 +2098,12 @@ mod shell_cwd_tests {
             };
             assert_eq!(p, expect);
         }
+    }
+
+    #[test]
+    fn ec_path_resolves() {
+        let c = unwrap_ac(Command::Ec { path: "d".into() }, Some("c"));
+        assert!(matches!(c, Command::Ec { path } if path == "c/d"));
     }
 
     #[test]
@@ -2328,6 +2434,12 @@ mod shell_cwd_tests {
                 "c/d",
             ),
             (
+                Command::Ec {
+                    path: "/c/d".into(),
+                },
+                "c/d",
+            ),
+            (
                 Command::Edit {
                     path: "/c/d".into(),
                 },
@@ -2354,6 +2466,7 @@ mod shell_cwd_tests {
             | Command::Slice { path: p, .. }
             | Command::Stat { path: p }
             | Command::Wc { path: p }
+            | Command::Ec { path: p }
             | Command::Edit { path: p }
             | Command::Wait { path: p }
             | Command::Less { path: p }) = out
@@ -2594,5 +2707,100 @@ mod cd_and_completion_prefix_tests {
         let (parent, pfx) = shell_completion_parent_prefix("chats/", None).unwrap();
         assert_eq!(parent, "/chats");
         assert_eq!(pfx, "");
+    }
+}
+
+#[cfg(all(test, unix))]
+mod shell_initial_cwd_mkdir_parents_tests {
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    use bma_ts::Monotonic;
+    use tabularium::SqliteDatabase;
+    use tabularium::rpc::Client;
+    use tabularium_server::web::{AppState, router};
+    use tempfile::tempdir;
+    use tokio::net::TcpListener;
+    use tokio::runtime::Handle;
+
+    use super::{CompletionState, install_initial_shell_cwd};
+
+    async fn spawn_client() -> (Client, tempfile::TempDir) {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("t.db");
+        let idx_path = dir.path().join("t.idx");
+        let uri = format!("sqlite://{}", db_path.display());
+        let db = Arc::new(SqliteDatabase::init(&uri, &idx_path, 8).await.unwrap());
+        let app = router(AppState {
+            db,
+            wait_timeout: Duration::from_secs(3),
+            process_started_at: Monotonic::now(),
+        });
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        let client = Client::init(format!("http://{addr}"), Duration::from_secs(5)).unwrap();
+        (client, dir)
+    }
+
+    #[tokio::test]
+    async fn install_initial_cwd_parents_creates_missing_tree() {
+        let (client, _dir) = spawn_client().await;
+        let client = Arc::new(Mutex::new(client));
+        let handle = Handle::current();
+        let state = Arc::new(Mutex::new(CompletionState::default()));
+        let c_blocking = Arc::clone(&client);
+        let s_blocking = Arc::clone(&state);
+        tokio::task::spawn_blocking(move || {
+            install_initial_shell_cwd(
+                &c_blocking,
+                &handle,
+                &s_blocking,
+                Some("shell_init_mkdir/a/b".into()),
+                true,
+            )
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        client
+            .lock()
+            .unwrap()
+            .list_directory("/shell_init_mkdir/a/b")
+            .await
+            .unwrap();
+        let g = state.lock().unwrap();
+        assert_eq!(g.cwd.as_deref(), Some("shell_init_mkdir/a/b"));
+    }
+
+    #[tokio::test]
+    async fn install_initial_cwd_parents_existing_dir_ok() {
+        let (client, _dir) = spawn_client().await;
+        client
+            .create_directory("/shell_idem", None, false)
+            .await
+            .unwrap();
+        let client = Arc::new(Mutex::new(client));
+        let handle = Handle::current();
+        let state = Arc::new(Mutex::new(CompletionState::default()));
+        let c_blocking = Arc::clone(&client);
+        let s_blocking = Arc::clone(&state);
+        tokio::task::spawn_blocking(move || {
+            install_initial_shell_cwd(
+                &c_blocking,
+                &handle,
+                &s_blocking,
+                Some("shell_idem".into()),
+                true,
+            )
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        let g = state.lock().unwrap();
+        assert_eq!(g.cwd.as_deref(), Some("shell_idem"));
     }
 }

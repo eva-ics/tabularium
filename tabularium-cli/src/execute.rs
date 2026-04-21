@@ -540,9 +540,13 @@ async fn cmd_chat(
     path: &str,
     nickname: &str,
     opts: ExecuteOpts,
+    create_placeholder_if_missing: bool,
 ) -> Result<ExecuteOutcome, BoxErr> {
     validate_chat_speaker_id(nickname).map_err(|e| -> BoxErr { e.to_string().into() })?;
     if !client.document_exists(path).await? {
+        if !create_placeholder_if_missing {
+            return Err(format!("ec: no document at {path} (nothing was saved)").into());
+        }
         client.put_document(path, "").await?;
     }
     let tail = initial_chat_subscribe_tail();
@@ -639,6 +643,34 @@ async fn cmd_chat(
     }
     let _ = ws.close().await;
     Ok(ExecuteOutcome::Ok)
+}
+
+async fn cmd_ec(client: &Client, path: &str, opts: ExecuteOpts) -> Result<ExecuteOutcome, BoxErr> {
+    let existed = client.document_exists(path).await?;
+    if existed {
+        cmd_edit(client, path).await?;
+    } else {
+        cmd_edit_ec_deferred(client, path).await?;
+    }
+    if !client.document_exists(path).await? {
+        return Ok(ExecuteOutcome::Ok);
+    }
+    let nick = default_chat_nickname();
+    cmd_chat(client, path, &nick, opts, false).await
+}
+
+/// `mkdir -p` semantics for shell `mcd`: `path` is normalized absolute (`/a/b`).
+pub(crate) async fn cmd_mcd(client: &Client, path: &str) -> Result<(), BoxErr> {
+    if client.document_exists(path).await? {
+        return Err(format!("mcd: path exists as a document, not a directory: {path}").into());
+    }
+    if client.list_directory(path).await.is_err() {
+        client.create_directory(path, None, true).await?;
+        client.list_directory(path).await.map_err(|e| -> BoxErr {
+            format!("mcd: directory not accessible after create: {e}").into()
+        })?;
+    }
+    Ok(())
 }
 
 async fn wait_in_shell_subprocess(path: &str, conn: &ShellChildRpc) -> Result<(), BoxErr> {
@@ -830,7 +862,12 @@ pub(crate) async fn execute(
             let path =
                 normalize_user_path(path.trim()).map_err(|e| -> BoxErr { e.to_string().into() })?;
             let nick = nickname.unwrap_or_else(default_chat_nickname);
-            return cmd_chat(client, &path, &nick, opts).await;
+            return cmd_chat(client, &path, &nick, opts, true).await;
+        }
+        Command::Ec { path } => {
+            let path =
+                normalize_user_path(path.trim()).map_err(|e| -> BoxErr { e.to_string().into() })?;
+            return cmd_ec(client, &path, opts).await;
         }
         Command::Slice {
             path, start, end, ..
@@ -2118,6 +2155,46 @@ async fn cmd_edit(client: &Client, path: &str) -> Result<(), BoxErr> {
     Ok(())
 }
 
+/// Missing-document branch for [`cmd_ec`]: no `append_document` until the user saves non-empty
+/// content from `$EDITOR` (avoids empty “ghost” rows when they quit without changes).
+async fn cmd_edit_ec_deferred(client: &Client, path: &str) -> Result<(), BoxErr> {
+    let original = String::new();
+    let doc_name = path.split_once('/').map_or(path, |(_, d)| d);
+    let ext = Path::new(doc_name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map_or_else(|| ".md".into(), |e| format!(".{e}"));
+    let mut tmp = tempfile::Builder::new()
+        .prefix("tb-ec-edit-")
+        .suffix(&ext)
+        .tempfile()?;
+    tmp.write_all(original.as_bytes())?;
+    tmp.flush()?;
+    let tmp_path = tmp.path().to_path_buf();
+    loop {
+        run_editor(&tmp_path)?;
+        let edited = std::fs::read_to_string(&tmp_path)?;
+        if edited == original {
+            break;
+        }
+        let upload = client.put_document(path, &edited).await;
+        match upload {
+            Ok(()) => break,
+            Err(e) => {
+                eprintln!(
+                    "\x1b[1;31mUpload failed: {} (temp file: {})\x1b[0m",
+                    e,
+                    tmp_path.display()
+                );
+                eprintln!("Press Enter to re-open the editor and save elsewhere if needed…");
+                let mut buf = String::new();
+                let _ = io::stdin().read_line(&mut buf);
+            }
+        }
+    }
+    Ok(())
+}
+
 fn edit_missing_document_error(err: &Error) -> bool {
     match err {
         Error::NotFound(_) => true,
@@ -2390,5 +2467,149 @@ mod edit_tests {
         assert!(!edit_missing_document_error(&Error::InvalidInput(
             "missing path".into()
         )));
+    }
+}
+
+#[cfg(all(test, unix))]
+mod mcd_ec_integration_tests {
+    use std::sync::{Arc, OnceLock};
+    use std::time::Duration;
+
+    use bma_ts::Monotonic;
+    use tabularium::SqliteDatabase;
+    use tabularium::rpc::Client;
+    use tabularium_server::web::{AppState, router};
+    use tempfile::tempdir;
+    use tokio::net::TcpListener;
+    use tokio::sync::Mutex as AsyncMutex;
+
+    use super::{cmd_edit_ec_deferred, cmd_mcd};
+
+    async fn editor_lock() -> tokio::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| AsyncMutex::new(())).lock().await
+    }
+
+    async fn spawn_client() -> (Client, tempfile::TempDir) {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("t.db");
+        let idx_path = dir.path().join("t.idx");
+        let uri = format!("sqlite://{}", db_path.display());
+        let db = Arc::new(SqliteDatabase::init(&uri, &idx_path, 8).await.unwrap());
+        let app = router(AppState {
+            db,
+            wait_timeout: Duration::from_secs(3),
+            process_started_at: Monotonic::now(),
+        });
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        let client = Client::init(format!("http://{addr}"), Duration::from_secs(5)).unwrap();
+        (client, dir)
+    }
+
+    #[tokio::test]
+    async fn mcd_creates_nested_directory() {
+        let (client, _dir) = spawn_client().await;
+        client
+            .create_directory("/mcd_root", None, false)
+            .await
+            .unwrap();
+        cmd_mcd(&client, "/mcd_root/deep/nested").await.unwrap();
+        client
+            .list_directory("/mcd_root/deep/nested")
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn mcd_existing_directory_no_op() {
+        let (client, _dir) = spawn_client().await;
+        client
+            .create_directory("/mcd_exist", None, false)
+            .await
+            .unwrap();
+        cmd_mcd(&client, "/mcd_exist").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn mcd_rejects_document_at_path() {
+        let (client, _dir) = spawn_client().await;
+        client
+            .create_directory("/mcd_conflict", None, false)
+            .await
+            .unwrap();
+        client
+            .put_document("/mcd_conflict/leaf", "x")
+            .await
+            .unwrap();
+        let err = cmd_mcd(&client, "/mcd_conflict/leaf")
+            .await
+            .expect_err("expected document conflict");
+        assert!(
+            err.to_string().contains("document"),
+            "unexpected err: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn ec_deferred_no_save_leaves_no_document() {
+        let _guard = editor_lock().await;
+        let (client, _dir) = spawn_client().await;
+        client
+            .create_directory("/ec_def", None, false)
+            .await
+            .unwrap();
+        let path = "/ec_def/new_doc.md";
+        let prev = std::env::var("EDITOR").ok();
+        unsafe {
+            std::env::set_var("EDITOR", "true");
+        }
+        cmd_edit_ec_deferred(&client, path).await.unwrap();
+        match &prev {
+            Some(v) => unsafe {
+                std::env::set_var("EDITOR", v);
+            },
+            None => unsafe {
+                std::env::remove_var("EDITOR");
+            },
+        }
+        assert!(!client.document_exists(path).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn ec_deferred_save_creates_document() {
+        let _guard = editor_lock().await;
+        let (client, dir) = spawn_client().await;
+        client
+            .create_directory("/ec_save", None, false)
+            .await
+            .unwrap();
+        let path = "/ec_save/stamped.md";
+        let script = dir.path().join("fake-editor.sh");
+        std::fs::write(&script, "#!/bin/sh\nprintf 'omnissiah' > \"$1\"\n").unwrap();
+        std::process::Command::new("chmod")
+            .arg("+x")
+            .arg(&script)
+            .status()
+            .unwrap();
+        let prev = std::env::var("EDITOR").ok();
+        unsafe {
+            std::env::set_var("EDITOR", script.to_string_lossy().as_ref());
+        }
+        cmd_edit_ec_deferred(&client, path).await.unwrap();
+        match &prev {
+            Some(v) => unsafe {
+                std::env::set_var("EDITOR", v);
+            },
+            None => unsafe {
+                std::env::remove_var("EDITOR");
+            },
+        }
+        let body = client.get_document(path).await.unwrap();
+        assert_eq!(body.content(), "omnissiah");
     }
 }

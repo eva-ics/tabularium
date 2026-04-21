@@ -95,6 +95,8 @@ pub(crate) enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         description: Vec<String>,
     },
+    /// Edit in `$EDITOR`, then open `chat` on the same path (new paths: no server write until the buffer differs from empty).
+    Ec { path: String },
     /// Edit document in `$EDITOR` (`DIR/FILE`).
     Edit { path: String },
     /// Export documents to the filesystem (recursive subtree).
@@ -207,6 +209,9 @@ pub(crate) enum Command {
     },
     /// Enter interactive shell (readline, history, completion).
     Shell {
+        /// Create missing directories (POSIX `mkdir -p`); requires initial CWD.
+        #[arg(short = 'p', long = "parents", requires = "cwd")]
+        parents: bool,
         /// Start in this directory (same path rules as `cd`; omit for repository root).
         cwd: Option<String>,
     },
@@ -254,12 +259,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     )?;
 
     match cli.command {
-        Command::Shell { cwd } => {
+        Command::Shell { parents, cwd } => {
             shell::run_shell(
                 client,
                 cli.api_uri,
                 cli.timeout_sec,
                 cwd,
+                parents,
                 shell::ShellSpawnContext {
                     header_flags: cli.header.clone(),
                 },
@@ -404,15 +410,41 @@ mod cli_parse_tests {
     #[test]
     fn shell_parses_optional_initial_cwd() {
         let c = Cli::try_parse_from(["tb", "-u", "http://x", "shell", "notes"]).unwrap();
-        let Command::Shell { cwd } = c.command else {
+        let Command::Shell { parents, cwd } = c.command else {
             panic!("expected shell");
         };
+        assert!(!parents);
         assert_eq!(cwd.as_deref(), Some("notes"));
         let c2 = Cli::try_parse_from(["tb", "-u", "http://x", "shell"]).unwrap();
-        let Command::Shell { cwd } = c2.command else {
+        let Command::Shell { parents, cwd } = c2.command else {
             panic!("expected shell");
         };
+        assert!(!parents);
         assert!(cwd.is_none());
+    }
+
+    #[test]
+    fn shell_parses_parents_with_cwd() {
+        let c = Cli::try_parse_from(["tb", "-u", "http://x", "shell", "-p", "notes/sub"]).unwrap();
+        let Command::Shell { parents, cwd } = c.command else {
+            panic!("expected shell");
+        };
+        assert!(parents);
+        assert_eq!(cwd.as_deref(), Some("notes/sub"));
+        let c2 = Cli::try_parse_from(["tb", "-u", "http://x", "shell", "notes/sub", "-p"]).unwrap();
+        let Command::Shell { parents, cwd } = c2.command else {
+            panic!("expected shell");
+        };
+        assert!(parents);
+        assert_eq!(cwd.as_deref(), Some("notes/sub"));
+    }
+
+    #[test]
+    fn shell_parents_without_cwd_errors() {
+        match Cli::try_parse_from(["tb", "-u", "http://x", "shell", "-p"]) {
+            Ok(_) => panic!("expected parse error for shell -p without cwd"),
+            Err(e) => assert_eq!(e.kind(), ErrorKind::MissingRequiredArgument),
+        }
     }
 
     #[test]
@@ -429,5 +461,14 @@ mod cli_parse_tests {
         assert!(recursive);
         assert_eq!(src, "a");
         assert_eq!(dst, "b");
+    }
+
+    #[test]
+    fn ec_parses_path() {
+        let c = Cli::try_parse_from(["tb", "-u", "http://x", "ec", "notes/x.md"]).unwrap();
+        let Command::Ec { path } = c.command else {
+            panic!("expected ec");
+        };
+        assert_eq!(path, "notes/x.md");
     }
 }
