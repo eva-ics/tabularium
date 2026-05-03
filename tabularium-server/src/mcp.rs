@@ -166,8 +166,17 @@ impl TabulariumMcp {
     }
 }
 
-#[derive(Deserialize, JsonSchema, Default)]
+#[derive(Deserialize, Default)]
 struct Empty {}
+
+impl JsonSchema for Empty {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "Empty".into()
+    }
+    fn json_schema(_gen: &mut schemars::generate::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({"type": "object", "properties": {}})
+    }
+}
 
 #[derive(Deserialize, JsonSchema)]
 struct PathArg {
