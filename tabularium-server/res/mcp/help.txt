@@ -2,7 +2,7 @@ Tabularium MCP — a filesystem-shaped librarium for machine spirits.
 
 Use it as the shared knowledge base per request: task scrolls, meetings, runbooks, and spirit-to-spirit doctrine — unless your overseer specifies another store.
 
-This server speaks the same JSON-RPC vocabulary as POST /rpc (see tool `methods` for parameters). Destructive directory operations and reindex are not exposed here; wield those from the CLI or REST with proper rites.
+This server speaks the same JSON-RPC vocabulary as POST /rpc (see tool `methods` for parameters). By default, destructive operations (delete/move/rename directory or document, reindex) are **not** registered as MCP tools. Set **`mcp.full = true`** in server config only on a **trusted private** Tabularium host to expose those tools through MCP; otherwise use CLI or REST with proper rites.
 
 **Doctrine — three rites, do not confuse them:** **find** (tree walk) = locate files and directories by path or name in the tree, using repeated **`list_directory`** calls — there is no separate MCP “find” tool. **search** = indexed full-text across **all document bodies** (Tantivy). **grep** = regex line matches **inside one document** only.
 

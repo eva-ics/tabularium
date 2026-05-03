@@ -26,10 +26,31 @@ use crate::web::{AppState, RpcAppError, dispatch_app_rpc};
 
 const MCP_HELP_BASE: &str = include_str!("../res/mcp/help.txt");
 
-const TOOL_NAMES_LINE: &str = "\
-Registered tools: help, server_help, methods, get_document, put_document, create_document, \
-append_document, say_document, list_directory, search, create_directory, describe, document_exists, \
-stat, wc, head, tail, slice, grep, wait.";
+const TOOL_NAMES_LINE: &str = "Call tool `methods` for the live catalog; the registered set depends on config `mcp.full` (destructive tools are omitted unless full mode is enabled).";
+
+/// JSON-RPC / MCP tool names stripped when `mcp.full` is false. Each name must match a `#[tool]` on [`TabulariumMcp`].
+const MCP_FULL_ONLY_TOOL_NAMES: &[&str] = &[
+    "delete_document",
+    "delete_directory",
+    "rename_document",
+    "rename_directory",
+    "move_document",
+    "move_directory",
+    "reindex",
+];
+
+const MCP_METHODS_CATALOG_FULL: &str = r#"
+
+**mcp.full = true only (trusted / private deployments):**
+
+delete_document — path (JSON-RPC delete_document).
+delete_directory — path, recursive optional (default false).
+rename_document — path, new_name.
+rename_directory — path, new_path.
+move_document — path, new_path (destination file path).
+move_directory — path, new_parent, new_name.
+reindex — path optional (omit or `/` for full rebuild; subtree otherwise).
+"#;
 
 const MCP_METHODS_CATALOG: &str = r#"MCP tools (parameters mirror POST /rpc JSON objects).
 
@@ -56,12 +77,15 @@ tail — path, lines optional (default 10 last lines like GNU tail); number, str
 slice — path, start_line/end_line or from_line/to_line aliases (1-based inclusive); numbers or string integers.
 grep — path, pattern, max_matches optional (0 = unlimited), invert_match optional (default false). Line-level regex within that single document; not repo-wide search.
 wait — path (long-poll until document changes or server timeout).
+
+When `mcp.full = true` in server config, destructive tools are also registered — see suffix in tool `methods` output.
 "#;
 
 #[derive(Clone)]
 pub struct TabulariumMcp {
     app: AppState,
     server_help: Arc<str>,
+    mcp_full: bool,
     tool_router: ToolRouter<Self>,
 }
 
@@ -96,18 +120,33 @@ fn tail_lines_to_rpc_value(lines: Option<&Value>) -> std::result::Result<Value, 
 }
 
 impl TabulariumMcp {
-    pub fn new(app: AppState, server_help: Arc<str>) -> Self {
+    pub fn new(app: AppState, server_help: Arc<str>, mcp_full: bool) -> Self {
+        let mut tool_router = Self::tool_router();
+        if !mcp_full {
+            for name in MCP_FULL_ONLY_TOOL_NAMES {
+                tool_router.remove_route(name);
+            }
+        }
         Self {
             app,
             server_help,
-            tool_router: Self::tool_router(),
+            mcp_full,
+            tool_router,
         }
     }
 
+    /// Whether an MCP tool with this name is registered (depends on `mcp.full`).
+    pub fn has_mcp_tool(&self, name: &str) -> bool {
+        self.tool_router.has_route(name)
+    }
+
     async fn call_rpc_json(&self, method: &str, params: Value) -> Result<String, String> {
+        let mcp_destructive = MCP_FULL_ONLY_TOOL_NAMES.contains(&method);
         info!(
             target: "tabularium_server::rpc",
             transport = "mcp",
+            mcp_full = self.mcp_full,
+            mcp_destructive,
             method = %method,
             params = %crate::rpc_preview::format_rpc_params_preview(Some(&params)),
             "RPC request"
@@ -230,6 +269,44 @@ struct GrepArg {
     invert_match: Option<bool>,
 }
 
+#[derive(Deserialize, JsonSchema)]
+struct DeleteDirectoryArg {
+    path: String,
+    #[serde(default)]
+    recursive: bool,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct RenameDocumentArg {
+    path: String,
+    new_name: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct RenameDirectoryArg {
+    path: String,
+    new_path: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct MoveDocumentArg {
+    path: String,
+    new_path: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct MoveDirectoryArg {
+    path: String,
+    new_parent: String,
+    new_name: String,
+}
+
+#[derive(Deserialize, JsonSchema, Default)]
+struct ReindexArg {
+    #[serde(default)]
+    path: Option<String>,
+}
+
 #[tool_router]
 impl TabulariumMcp {
     #[tool(
@@ -254,7 +331,11 @@ impl TabulariumMcp {
         description = "Terse catalog of MCP tools and JSON parameter fields (matches JSON-RPC where applicable)."
     )]
     async fn methods(&self, Parameters(_): Parameters<Empty>) -> String {
-        MCP_METHODS_CATALOG.to_string()
+        let mut s = MCP_METHODS_CATALOG.to_string();
+        if self.mcp_full {
+            s.push_str(MCP_METHODS_CATALOG_FULL);
+        }
+        s
     }
 
     #[tool(description = "Read full document body and metadata (JSON-RPC get_document).")]
@@ -449,14 +530,111 @@ impl TabulariumMcp {
     async fn wait(&self, Parameters(p): Parameters<PathArg>) -> Result<String, String> {
         self.call_rpc_json("wait", json!({ "path": p.path })).await
     }
+
+    #[tool(
+        description = "Delete a file (JSON-RPC delete_document). **Registered only when `mcp.full = true` in server config.**"
+    )]
+    async fn delete_document(&self, Parameters(p): Parameters<PathArg>) -> Result<String, String> {
+        self.call_rpc_json("delete_document", json!({ "path": p.path }))
+            .await
+    }
+
+    #[tool(
+        description = "Delete a directory (JSON-RPC delete_directory). **Registered only when `mcp.full = true`.**"
+    )]
+    async fn delete_directory(
+        &self,
+        Parameters(p): Parameters<DeleteDirectoryArg>,
+    ) -> Result<String, String> {
+        self.call_rpc_json(
+            "delete_directory",
+            json!({ "path": p.path, "recursive": p.recursive }),
+        )
+        .await
+    }
+
+    #[tool(
+        description = "Rename a file's last segment (JSON-RPC rename_document). **Registered only when `mcp.full = true`.**"
+    )]
+    async fn rename_document(
+        &self,
+        Parameters(p): Parameters<RenameDocumentArg>,
+    ) -> Result<String, String> {
+        self.call_rpc_json(
+            "rename_document",
+            json!({ "path": p.path, "new_name": p.new_name }),
+        )
+        .await
+    }
+
+    #[tool(
+        description = "Rename/move a directory by full new_path (JSON-RPC rename_directory). **Registered only when `mcp.full = true`.**"
+    )]
+    async fn rename_directory(
+        &self,
+        Parameters(p): Parameters<RenameDirectoryArg>,
+    ) -> Result<String, String> {
+        self.call_rpc_json(
+            "rename_directory",
+            json!({ "path": p.path, "new_path": p.new_path }),
+        )
+        .await
+    }
+
+    #[tool(
+        description = "Move a file to a new absolute file path (JSON-RPC move_document). **Registered only when `mcp.full = true`.**"
+    )]
+    async fn move_document(
+        &self,
+        Parameters(p): Parameters<MoveDocumentArg>,
+    ) -> Result<String, String> {
+        self.call_rpc_json(
+            "move_document",
+            json!({ "path": p.path, "new_path": p.new_path }),
+        )
+        .await
+    }
+
+    #[tool(
+        description = "Move a directory under a new parent with a new leaf name (JSON-RPC move_directory). **Registered only when `mcp.full = true`.**"
+    )]
+    async fn move_directory(
+        &self,
+        Parameters(p): Parameters<MoveDirectoryArg>,
+    ) -> Result<String, String> {
+        self.call_rpc_json(
+            "move_directory",
+            json!({
+                "path": p.path,
+                "new_parent": p.new_parent,
+                "new_name": p.new_name,
+            }),
+        )
+        .await
+    }
+
+    #[tool(
+        description = "Rebuild search index (JSON-RPC reindex); optional path limits subtree. **Registered only when `mcp.full = true`.**"
+    )]
+    async fn reindex(&self, Parameters(p): Parameters<ReindexArg>) -> Result<String, String> {
+        let mut m = Map::new();
+        if let Some(path) = p.path.filter(|s| !s.is_empty()) {
+            m.insert("path".into(), json!(path));
+        }
+        self.call_rpc_json("reindex", Value::Object(m)).await
+    }
 }
 
 #[tool_handler]
 impl ServerHandler for TabulariumMcp {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
-            "Tabularium MCP — fs-like librarium for machine spirits. Three rites: list_directory (tree walk / find-by-listing, rows carry modified_at), search (indexed full-text across bodies, file names, descriptions), grep (regex lines in one file). say_document for meetings (`from_id` = sender nickname). append_document is not for chat blocks. MCP omits delete/move/rename/reindex; use CLI or REST for those rites.",
-        )
+        let instructions = if self.mcp_full {
+            "Tabularium MCP — **trusted FULL mode**. Same JSON-RPC semantics and authentication as POST /rpc (no alternate permission model). Includes destructive tools: delete_document, delete_directory, rename_document, rename_directory, move_document, move_directory, reindex — plus the standard librarium surface. **Private / operator-controlled deployments only.**"
+        } else {
+            "Tabularium MCP — fs-like librarium for machine spirits. Three rites: list_directory (tree walk / find-by-listing, rows carry modified_at), search (indexed full-text across bodies, file names, descriptions), grep (regex lines in one file). say_document for meetings (`from_id` = sender nickname). append_document is not for chat blocks. Destructive tools (delete/move/rename/reindex) are not registered unless `mcp.full = true` in server config; otherwise use CLI or REST."
+        };
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+            .with_instructions(instructions)
     }
 }
 
@@ -465,11 +643,12 @@ pub async fn serve(
     listen: &str,
     app: AppState,
     server_help: String,
+    mcp_full: bool,
     cancel: CancellationToken,
 ) -> std::io::Result<()> {
     let listener = TcpListener::bind(listen).await?;
     let help: Arc<str> = Arc::from(server_help);
-    let template = TabulariumMcp::new(app, Arc::clone(&help));
+    let template = TabulariumMcp::new(app, Arc::clone(&help), mcp_full);
     let service = StreamableHttpService::new(
         move || Ok(template.clone()),
         Arc::new(LocalSessionManager::default()),

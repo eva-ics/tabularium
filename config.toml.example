@@ -12,5 +12,8 @@ timeout = 3600
 # Optional MCP (streamable HTTP). Build with: cargo build -p tabularium-server --features mcp
 [mcp]
 listen = "127.0.0.1:3031"
+# WARNING: `full = true` registers destructive MCP tools (delete/move/rename document or directory, reindex).
+# Same authentication as JSON-RPC — trusted private / operator-controlled deployments only. Omit or false for safe default.
+# full = false
 # Optional path to deployment-specific help (read at startup).
 # server_help = "/path/to/server_help.md"

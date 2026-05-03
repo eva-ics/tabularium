@@ -8,7 +8,7 @@ Do not point agents at the REST API, the CLI, SQLite, or the Tantivy index when 
 
 Start a Tabularium server with MCP enabled. The default server build already includes the `mcp` feature.
 
-`config.toml.example` shows the MCP listener:
+`config.toml.example` shows the MCP listener. Optional **`mcp.full`** (default `false`): when `true`, the server also registers **destructive** MCP tools (`delete_document`, `delete_directory`, `rename_*`, `move_*`, `reindex`) — same auth headers as `/rpc`, **trusted deployments only**.
 
 ```toml
 [mcp]

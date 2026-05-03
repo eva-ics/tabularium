@@ -161,6 +161,8 @@ async fn run(cfg: config::Config) -> Result<(), Box<dyn std::error::Error + Send
         .and_then(|m| m.listen.as_ref().map(ToString::to_string));
     #[cfg(feature = "mcp")]
     let mcp_server_help_path = cfg.mcp.as_ref().and_then(|m| m.server_help.clone());
+    #[cfg(feature = "mcp")]
+    let mcp_full = cfg.mcp.as_ref().is_some_and(|m| m.full);
 
     let db_uri = format!("sqlite://{}", cfg.server.database_path.display());
     let db = Arc::new(tabularium::SqliteDatabase::init(&db_uri, &cfg.server.index_dir, 256).await?);
@@ -186,7 +188,7 @@ async fn run(cfg: config::Config) -> Result<(), Box<dyn std::error::Error + Send
         let mcp_cancel = shutdown.child_token();
         tokio::spawn(async move {
             if let Err(e) =
-                tabularium_server::mcp::serve(&listen, st, server_help, mcp_cancel).await
+                tabularium_server::mcp::serve(&listen, st, server_help, mcp_full, mcp_cancel).await
             {
                 tracing::error!(error = %e, "MCP server exited with error");
             }

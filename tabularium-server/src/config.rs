@@ -25,6 +25,10 @@ pub struct McpSection {
     /// Deployment-specific help text (read at startup).
     #[serde(default)]
     pub server_help: Option<std::path::PathBuf>,
+    /// Trusted-operator mode: register destructive MCP tools (`delete_*`, `move_*`, `rename_*`, `reindex`).
+    /// **Default `false`** when omitted — safe MCP surface only.
+    #[serde(default)]
+    pub full: bool,
 }
 
 fn default_timeout_secs() -> u64 {
