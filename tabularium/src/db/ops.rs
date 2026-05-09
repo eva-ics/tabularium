@@ -73,6 +73,43 @@ impl<S: Storage> Database<S> {
         }
     }
 
+    /// Append `to_append` only if `marker` does not occur as a **substring** anywhere in the
+    /// current UTF-8 body (Rust [`str::contains`]). The document must already exist.
+    ///
+    /// Uses a per-document async mutex so concurrent callers cannot both observe “marker absent”
+    /// and append (TOCTOU). Missing document is [`Error::NotFound`], not `Ok(false)`.
+    ///
+    /// Returns `true` if bytes were appended, `false` if skipped because the marker was present.
+    #[instrument(skip(self, path, marker, to_append), err(Debug))]
+    pub async fn append_if_not_contains_by_path(
+        &self,
+        path: impl AsRef<str> + Send,
+        marker: impl AsRef<str> + Send,
+        to_append: impl AsRef<str> + Send,
+    ) -> Result<bool> {
+        let path = path.as_ref();
+        let marker = marker.as_ref();
+        let to_append = to_append.as_ref();
+        canonical_path_segments(path)?;
+        if marker.is_empty() {
+            return Err(Error::InvalidInput(
+                "append_if_not_contains: marker must be non-empty".into(),
+            ));
+        }
+        let fid = self.resolve_file_path(path).await?;
+        if to_append.is_empty() {
+            return Ok(false);
+        }
+        let lock = self.doc_append_mutex(fid);
+        let _guard = lock.lock().await;
+        let current = self.storage.get_file_content(fid).await?;
+        if current.contains(marker) {
+            return Ok(false);
+        }
+        self.append_document(fid, to_append).await?;
+        Ok(true)
+    }
+
     #[instrument(skip(self, path, from_id, text), err(Debug))]
     pub async fn say_document_by_path(
         &self,

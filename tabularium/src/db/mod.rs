@@ -22,7 +22,7 @@ use std::time::Duration;
 
 use dashmap::DashMap;
 use moka::future::Cache;
-use tokio::sync::watch as wait_cell;
+use tokio::sync::{Mutex, watch as wait_cell};
 use tracing::instrument;
 
 use crate::resource_path::{canonical_path_segments, parent_and_final_name};
@@ -79,6 +79,8 @@ pub struct Database<S: Storage> {
     cache: Cache<EntryId, String>,
     cache_active: bool,
     doc_wait: Arc<DashMap<EntryId, wait_cell::Sender<u64>>>,
+    /// Per-file mutex for atomic read-check-append (`append_if_not_contains_by_path`).
+    doc_append_locks: Arc<DashMap<EntryId, Arc<Mutex<()>>>>,
 }
 
 /// Type alias for the stage-1 sqlite stack.
@@ -112,11 +114,19 @@ impl SqliteDatabase {
             cache,
             cache_active: cache_size > 0,
             doc_wait: Arc::new(DashMap::new()),
+            doc_append_locks: Arc::new(DashMap::new()),
         })
     }
 }
 
 impl<S: Storage> Database<S> {
+    pub(crate) fn doc_append_mutex(&self, file_id: EntryId) -> Arc<Mutex<()>> {
+        self.doc_append_locks
+            .entry(file_id)
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    }
+
     async fn refresh_search_subtree(&self, directory_path: &str) -> Result<()> {
         let rows = self
             .storage
@@ -320,6 +330,7 @@ impl<S: Storage> Database<S> {
         self.search.delete_file(file_id).await?;
         self.cache.invalidate(&file_id).await;
         self.doc_wait.remove(&file_id);
+        self.doc_append_locks.remove(&file_id);
         Ok(())
     }
 
@@ -880,6 +891,118 @@ mod tests {
         db.delete_directory_recursive("/big").await.unwrap();
         assert!(db.get_document(id).await.is_err());
         assert!(db.resolve_directory_path("/big").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn append_if_not_contains_appends_when_marker_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("ainc.db");
+        let idx_path = dir.path().join("ainc.idx");
+        let uri = format!("sqlite://{}", db_path.display());
+        let db = SqliteDatabase::init(&uri, &idx_path, 0).await.unwrap();
+        db.create_directory("/c", None, false).await.unwrap();
+        db.create_file_in_directory("/c", "d", "alpha")
+            .await
+            .unwrap();
+        assert!(
+            db.append_if_not_contains_by_path("/c/d", "OMEGA", "\nOMEGA\n")
+                .await
+                .unwrap()
+        );
+        assert!(
+            !db.append_if_not_contains_by_path("/c/d", "OMEGA", "\nOMEGA\n")
+                .await
+                .unwrap()
+        );
+        let id = db.resolve_file_path("/c/d").await.unwrap();
+        let body = db.get_document(id).await.unwrap();
+        assert_eq!(body.matches("OMEGA").count(), 1);
+    }
+
+    #[tokio::test]
+    async fn append_if_not_contains_substring_sees_done_inside_undone() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("substr.db");
+        let idx_path = dir.path().join("substr.idx");
+        let uri = format!("sqlite://{}", db_path.display());
+        let db = SqliteDatabase::init(&uri, &idx_path, 0).await.unwrap();
+        db.create_directory("/c", None, false).await.unwrap();
+        db.create_file_in_directory("/c", "d", "UNDONE")
+            .await
+            .unwrap();
+        assert!(
+            !db.append_if_not_contains_by_path("/c/d", "DONE", "x")
+                .await
+                .unwrap()
+        );
+        let id = db.resolve_file_path("/c/d").await.unwrap();
+        assert_eq!(db.get_document(id).await.unwrap(), "UNDONE");
+    }
+
+    #[tokio::test]
+    async fn append_if_not_contains_rejects_empty_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("mk.db");
+        let idx_path = dir.path().join("mk.idx");
+        let uri = format!("sqlite://{}", db_path.display());
+        let db = SqliteDatabase::init(&uri, &idx_path, 0).await.unwrap();
+        db.create_directory("/c", None, false).await.unwrap();
+        db.create_file_in_directory("/c", "d", "x").await.unwrap();
+        let e = db
+            .append_if_not_contains_by_path("/c/d", "", "y")
+            .await
+            .unwrap_err();
+        assert!(e.to_string().contains("marker must be non-empty"), "{e}");
+    }
+
+    #[tokio::test]
+    async fn append_if_not_contains_errors_when_document_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("miss.db");
+        let idx_path = dir.path().join("miss.idx");
+        let uri = format!("sqlite://{}", db_path.display());
+        let db = SqliteDatabase::init(&uri, &idx_path, 0).await.unwrap();
+        db.create_directory("/c", None, false).await.unwrap();
+        assert!(matches!(
+            db.append_if_not_contains_by_path("/c/nope", "M", "z").await,
+            Err(crate::Error::NotFound(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn append_if_not_contains_concurrent_only_one_inserts_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("conc.db");
+        let idx_path = dir.path().join("conc.idx");
+        let uri = format!("sqlite://{}", db_path.display());
+        let db = Arc::new(SqliteDatabase::init(&uri, &idx_path, 0).await.unwrap());
+        db.create_directory("/c", None, false).await.unwrap();
+        db.create_file_in_directory("/c", "d", "start")
+            .await
+            .unwrap();
+        let marker = "<<<FLAG>>>";
+        let piece = format!("\n{marker}\n");
+        let n = 48usize;
+        let mut handles = Vec::with_capacity(n);
+        for _ in 0..n {
+            let db = db.clone();
+            let p = piece.clone();
+            handles.push(tokio::spawn(async move {
+                db.append_if_not_contains_by_path("/c/d", marker, &p)
+                    .await
+                    .unwrap()
+            }));
+        }
+        let mut truths = 0usize;
+        for h in handles {
+            if h.await.unwrap() {
+                truths += 1;
+            }
+        }
+        assert_eq!(truths, 1);
+        let id = db.resolve_file_path("/c/d").await.unwrap();
+        let body = db.get_document(id).await.unwrap();
+        assert_eq!(body.matches(marker).count(), 1);
     }
 
     #[tokio::test]

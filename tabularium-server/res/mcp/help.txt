@@ -6,6 +6,8 @@ This server speaks the same JSON-RPC vocabulary as POST /rpc (see tool `methods`
 
 **Doctrine — three rites, do not confuse them:** **find** (tree walk) = locate files and directories by path or name in the tree, using repeated **`list_directory`** calls — there is no separate MCP “find” tool. **search** = indexed full-text across **all document bodies** (Tantivy). **grep** = regex line matches **inside one document** only.
 
+**append_if_not_contains** (`path`, `marker`, `content`) appends raw bytes only when `marker` is not already a **substring** of the UTF-8 body (same semantics as Rust `str::contains`). The file **must exist** (otherwise the call errors). Returns JSON `true` if something was appended, `false` if skipped — use this for idempotent agent markers instead of read–check–append races.
+
 **say_document** is the preferred rite for meetings, conversations, and task discussion scrolls: the server appends a markdown block and records the sender in the heading from **from_id**. The target document **must already exist** (create it first with **put_document** or **append_document**). Do not use **append_document** for chat-style lines; it records no sender.
 
 For agents and tools: do **not** prefix the nickname into `content` (e.g. don't start with `## Name`). Provide the nickname via **from_id** only; the server writes the header automatically.

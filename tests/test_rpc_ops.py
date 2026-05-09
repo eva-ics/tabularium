@@ -31,6 +31,57 @@ def test_rpc_append_creates_missing_document():
     assert r.json()["content"] == "segmentum"
 
 
+def test_rpc_append_if_not_contains_roundtrip():
+    base = _base()
+    cat = "py_ainc_cat"
+    path = f"{cat}/py_ainc_doc"
+    mkdir(base, cat)
+    put_doc(base, cat, "py_ainc_doc", "alpha")
+
+    r1 = _rpc(
+        "append_if_not_contains",
+        {"path": path, "marker": "OMEGA", "content": "\nOMEGA\n"},
+    )
+    assert r1.get("result") is True, r1
+
+    r2 = _rpc(
+        "append_if_not_contains",
+        {"path": path, "marker": "OMEGA", "content": "\nOMEGA\n"},
+    )
+    assert r2.get("result") is False, r2
+
+    r = requests.get(f"{base}/api/doc/{cat}/py_ainc_doc", timeout=10)
+    r.raise_for_status()
+    body = r.json()["content"]
+    assert body.count("OMEGA") == 1
+
+
+def test_rpc_append_if_not_contains_missing_document_errors():
+    base = _base()
+    cat = "py_ainc_miss"
+    mkdir(base, cat)
+    out = _rpc(
+        "append_if_not_contains",
+        {"path": f"{cat}/no_such_file", "marker": "x", "content": "y"},
+    )
+    assert "error" in out
+    assert out["error"]["code"] == -32603
+
+
+def test_rpc_append_if_not_contains_empty_marker_invalid():
+    base = _base()
+    cat = "py_ainc_badmk"
+    path = f"{cat}/py_ainc_badmk_doc"
+    mkdir(base, cat)
+    put_doc(base, cat, "py_ainc_badmk_doc", "z")
+    out = _rpc(
+        "append_if_not_contains",
+        {"path": path, "marker": "", "content": "y"},
+    )
+    assert "error" in out
+    assert out["error"]["code"] == -32602
+
+
 def test_rpc_create_directory_parents_false_requires_parent():
     _base()
     s = _slug()

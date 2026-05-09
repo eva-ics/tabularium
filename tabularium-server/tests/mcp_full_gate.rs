@@ -36,6 +36,7 @@ async fn mcp_full_false_omits_destructive_tools() {
     assert!(!mcp.has_mcp_tool("reindex"));
     assert!(mcp.has_mcp_tool("get_document"));
     assert!(mcp.has_mcp_tool("list_directory"));
+    assert!(mcp.has_mcp_tool("append_if_not_contains"));
 }
 
 #[tokio::test]

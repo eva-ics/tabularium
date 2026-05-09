@@ -251,6 +251,23 @@ impl Client {
         Ok(())
     }
 
+    /// `append_if_not_contains` RPC — append `content` only if `marker` is absent from the body (substring match); returns whether the document was modified.
+    pub async fn append_if_not_contains(
+        &self,
+        path: impl AsRef<Path>,
+        marker: impl AsRef<str>,
+        content: impl AsRef<str>,
+    ) -> Result<bool> {
+        let path = normalize_path_for_rpc(path)?;
+        let params = json!({
+            "path": path,
+            "marker": marker.as_ref(),
+            "content": content.as_ref(),
+        });
+        let r = self.call("append_if_not_contains", params).await?;
+        serde_json::from_value(r).map_err(|e| Error::InvalidInput(e.to_string()))
+    }
+
     /// `say_document` RPC — server appends a markdown chat block (`## from_id`, body, trailing blank line).
     pub async fn say_document(
         &self,

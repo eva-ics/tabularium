@@ -64,6 +64,7 @@ get_document — path (absolute file).
 put_document — path, content (create or replace full body).
 create_document — path, content (new file; parent directory must exist).
 append_document — path, content (raw append; not for chat/meeting blocks — use say_document).
+append_if_not_contains — path, marker, content: atomically append `content` only if `marker` is **not** already a substring of the UTF-8 body (Rust `str::contains`; e.g. marker `DONE` matches inside `UNDONE`). **Document must exist** (errors if missing). Returns JSON `true` if appended, `false` if skipped.
 say_document — path, from_id (sender nickname), content. **Preferred for meetings, conversations, and task scrolls** — server appends a markdown block with the sender in the heading. **Do not prefix the nickname into content**; provide it via from_id only. **Target file must already exist** (use put_document or append_document to create).
 list_directory — path optional (omit or empty for root `/`). Rows include modified_at; use this to walk the tree; there is no separate MCP find tool.
 search — query, path optional (subtree filter). Indexed full-text over document body, file name, and description.
@@ -186,6 +187,13 @@ struct PathArg {
 #[derive(Deserialize, JsonSchema)]
 struct PathContent {
     path: String,
+    content: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct PathMarkerContent {
+    path: String,
+    marker: String,
     content: String,
 }
 
@@ -384,6 +392,24 @@ impl TabulariumMcp {
         self.call_rpc_json(
             "append_document",
             json!({ "path": p.path, "content": p.content }),
+        )
+        .await
+    }
+
+    #[tool(
+        description = "Append `content` only if `marker` is not already a substring of the document body (JSON-RPC append_if_not_contains). Per-document lock; document must exist; returns JSON boolean true when appended, false when skipped."
+    )]
+    async fn append_if_not_contains(
+        &self,
+        Parameters(p): Parameters<PathMarkerContent>,
+    ) -> Result<String, String> {
+        self.call_rpc_json(
+            "append_if_not_contains",
+            json!({
+                "path": p.path,
+                "marker": p.marker,
+                "content": p.content,
+            }),
         )
         .await
     }

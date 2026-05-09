@@ -790,6 +790,26 @@ pub(crate) async fn dispatch_app_rpc(
             );
             Ok(Value::Null)
         }
+        "append_if_not_contains" => {
+            let path = rpc_path(&m, "path")?;
+            let marker = get_str(&m, "marker")?;
+            let content = get_str(&m, "content")?;
+            canonical_path_segments(&path)?;
+            let modified = st
+                .db
+                .append_if_not_contains_by_path(&path, marker, content)
+                .await?;
+            info!(
+                target: "tabularium_server::api",
+                method = "append_if_not_contains",
+                path = %path,
+                marker_len = marker.len(),
+                append_len = content.len(),
+                modified,
+                "RPC conditional append"
+            );
+            Ok(Value::Bool(modified))
+        }
         "say_document" => {
             let path = rpc_path(&m, "path")?;
             let from_id = get_str(&m, "from_id")?;
