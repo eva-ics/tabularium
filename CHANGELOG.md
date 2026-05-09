@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+Safety release.
+
+- **Breaking**: `put_document` and `append_document` (JSON-RPC and MCP) now take an
+  optional `force` boolean (default `false`). With `force=false`, an existing target
+  fails with `Duplicate` (`-32002`); pass `force=true` to deliberately overwrite
+  (`put_document`) or append to (`append_document`) an existing scroll. Missing
+  targets are always created. Old callers that relied on silent overwrite/append
+  must now pass `force=true`. The check-then-create is atomic at the storage layer
+  (SQLite `UNIQUE(parent_id, name)`), so concurrent `force=false` callers cannot
+  both create.
+- `say_document` is intentionally exempt from the guard (cannot create new
+  documents; meeting/conversation rite only) — documented in MCP help and
+  `docs/json-rpc-methods.md`.
+- REST `PUT` / `PATCH /api/doc/...` keep HTTP upsert convention (effectively
+  `force=true`); use the JSON-RPC surface when create-only behaviour is required.
+- CLI: `tb put` and `tb append` gain `-f` / `--force` for explicit overwrite/append.
+
 ## 0.1.5 - 2026-04-11
 
 Web UI workflow and rendering release.

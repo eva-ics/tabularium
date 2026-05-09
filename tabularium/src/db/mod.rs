@@ -444,7 +444,7 @@ impl<S: Storage> Database<S> {
                     self.bump_doc_wait(fid);
                     Ok(())
                 }
-                Err(Error::NotFound(_)) => self.put_document_by_path(path, "").await,
+                Err(Error::NotFound(_)) => self.put_document_by_path(path, "", false).await,
                 Err(e) => Err(e),
             },
             Some(ts) => {
@@ -465,7 +465,7 @@ impl<S: Storage> Database<S> {
                         Ok(())
                     }
                     Err(Error::NotFound(_)) => {
-                        self.put_document_by_path(path, "").await?;
+                        self.put_document_by_path(path, "", false).await?;
                         let id = self.storage.resolve_path(path, None).await?;
                         self.storage.set_entry_modified_at(id, ts).await?;
                         if self
@@ -760,12 +760,127 @@ mod tests {
         let uri = format!("sqlite://{}", db_path.display());
         let db = SqliteDatabase::init(&uri, &idx_path, 0).await.unwrap();
         db.create_directory("/c", None, false).await.unwrap();
-        db.append_document_by_path("/c/newdoc", "hello")
+        db.append_document_by_path("/c/newdoc", "hello", false)
             .await
             .unwrap();
         let meta = db.document_ref_by_path("/c/newdoc").await.unwrap();
         let body = db.get_document(meta.id()).await.unwrap();
         assert_eq!(body, "hello");
+    }
+
+    /// `force=false` on an already-existing document must error with `Duplicate`,
+    /// regardless of whether it's `put_document_by_path` or `append_document_by_path`.
+    /// *Ignorantia non excusat* — silent overwrite is heresy.
+    #[tokio::test]
+    async fn put_and_append_force_false_existing_target_returns_duplicate() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("force_dup.db");
+        let idx_path = dir.path().join("force_dup.idx");
+        let uri = format!("sqlite://{}", db_path.display());
+        let db = SqliteDatabase::init(&uri, &idx_path, 0).await.unwrap();
+        db.create_directory("/c", None, false).await.unwrap();
+
+        // Initial create via put(force=false) on missing target succeeds.
+        db.put_document_by_path("/c/d", "first", false)
+            .await
+            .unwrap();
+        let id = db.document_ref_by_path("/c/d").await.unwrap().id();
+        let body = db.get_document(id).await.unwrap();
+        assert_eq!(body, "first");
+
+        // put(force=false) on existing → Duplicate (no body change).
+        let err = db
+            .put_document_by_path("/c/d", "OVERWRITE", false)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, crate::Error::Duplicate(_)), "got {err:?}");
+        let body = db.get_document(id).await.unwrap();
+        assert_eq!(body, "first");
+
+        // append(force=false) on existing → Duplicate (no body change).
+        let err = db
+            .append_document_by_path("/c/d", "TAIL", false)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, crate::Error::Duplicate(_)), "got {err:?}");
+        let body = db.get_document(id).await.unwrap();
+        assert_eq!(body, "first");
+    }
+
+    /// `force=true` preserves the legacy semantics: put replaces, append appends.
+    #[tokio::test]
+    async fn put_force_true_replaces_and_append_force_true_appends() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("force_yes.db");
+        let idx_path = dir.path().join("force_yes.idx");
+        let uri = format!("sqlite://{}", db_path.display());
+        let db = SqliteDatabase::init(&uri, &idx_path, 0).await.unwrap();
+        db.create_directory("/c", None, false).await.unwrap();
+
+        db.put_document_by_path("/c/d", "first", false)
+            .await
+            .unwrap();
+        let id = db.document_ref_by_path("/c/d").await.unwrap().id();
+
+        // put(force=true) on existing → overwrite.
+        db.put_document_by_path("/c/d", "second", true)
+            .await
+            .unwrap();
+        let body = db.get_document(id).await.unwrap();
+        assert_eq!(body, "second");
+
+        // append(force=true) on existing → append (single newline boundary).
+        db.append_document_by_path("/c/d", "tail", true)
+            .await
+            .unwrap();
+        let body = db.get_document(id).await.unwrap();
+        assert_eq!(body, "second\ntail");
+    }
+
+    /// Concurrent `force=false` callers racing on the same fresh path must produce
+    /// exactly one `Ok` and one `Duplicate`. This proves atomicity at the storage
+    /// layer (no exists-then-create TOCTOU window). The Emperor protects.
+    #[tokio::test]
+    async fn put_force_false_concurrent_creators_atomic_one_winner() {
+        use std::sync::Arc;
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("race.db");
+        let idx_path = dir.path().join("race.idx");
+        let uri = format!("sqlite://{}", db_path.display());
+        let db = Arc::new(SqliteDatabase::init(&uri, &idx_path, 0).await.unwrap());
+        db.create_directory("/c", None, false).await.unwrap();
+
+        let path = "/c/contested";
+        let n: usize = 8;
+        let mut handles = Vec::with_capacity(n);
+        for i in 0..n {
+            let db = Arc::clone(&db);
+            let payload = format!("agent-{i}");
+            handles.push(tokio::spawn(async move {
+                db.put_document_by_path(path, &payload, false).await
+            }));
+        }
+
+        let mut ok_count = 0;
+        let mut dup_count = 0;
+        let mut other = Vec::new();
+        for h in handles {
+            match h.await.unwrap() {
+                Ok(()) => ok_count += 1,
+                Err(crate::Error::Duplicate(_)) => dup_count += 1,
+                Err(e) => other.push(e),
+            }
+        }
+        assert!(other.is_empty(), "unexpected error variants: {other:?}");
+        assert_eq!(ok_count, 1, "exactly one creator must win the race");
+        assert_eq!(dup_count, n - 1, "all losers must see Duplicate");
+
+        // Document exists and contains exactly one of the candidate payloads.
+        let body = db
+            .get_document(db.document_ref_by_path(path).await.unwrap().id())
+            .await
+            .unwrap();
+        assert!(body.starts_with("agent-"), "got body {body:?}");
     }
 
     #[tokio::test]

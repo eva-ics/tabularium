@@ -12,8 +12,8 @@ Path segments under `/api/doc/…` accept **name** or **numeric id** per segment
 - `GET /api/doc/{dir}` — when `{dir}` resolves as a directory: list entries (same shape as `GET /api/doc` for that path).
 - `POST /api/doc/{dir}` — JSON `{ "name": "...", "content": "..." }`, `application/x-www-form-urlencoded` (`name` & `content`), or `multipart/form-data` with those fields. `201` + `Location` to the document path.
 - `GET /api/doc/{dir}/{name}` — full document JSON including `content`.
-- `PUT /api/doc/{dir}/{name}` — JSON `{ "content": "..." }`, `application/x-www-form-urlencoded` (`content=...`), raw UTF-8 body, or `multipart/form-data` field `content`. Replaces body. `204`.
-- `PATCH /api/doc/{dir}/{name}` — same content shapes as `PUT`; appends (with newline). `204`.
+- `PUT /api/doc/{dir}/{name}` — JSON `{ "content": "..." }`, `application/x-www-form-urlencoded` (`content=...`), raw UTF-8 body, or `multipart/form-data` field `content`. Replaces body. `204`. (HTTP `PUT` is upsert by convention; the JSON-RPC `force` guard does not apply here — use `POST /rpc` `put_document` with `force=false` when you need create-only semantics.)
+- `PATCH /api/doc/{dir}/{name}` — same content shapes as `PUT`; appends (with newline). `204`. (Same upsert convention; use JSON-RPC `append_document` with `force=false` for create-only behaviour.)
 - `DELETE /api/doc/{dir}/{name}` — `204`.
 
 `PATCH` on a directory-only path is not exposed (documents only).

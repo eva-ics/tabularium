@@ -54,9 +54,9 @@ def test_cli_put_stdin():
     gr = requests.get(f"{base}/api/doc/{cat}/{doc}", timeout=10)
     gr.raise_for_status()
     assert gr.json()["content"] == body
-    body2 = "replaced_by_put_upsert"
+    body2 = "replaced_by_put_force"
     r2 = subprocess.run(
-        [tb, "-u", base, "put", path],
+        [tb, "-u", base, "put", "--force", path],
         input=body2,
         text=True,
         capture_output=True,

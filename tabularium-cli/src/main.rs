@@ -61,8 +61,15 @@ pub(crate) struct ShellCommandOnly {
 
 #[derive(Clone, Subcommand)]
 pub(crate) enum Command {
-    /// Append to a document (`DIR/FILE`).
-    Append { path: String, file: Option<String> },
+    /// Append to a document (`DIR/FILE`). Default safe: errors with `Duplicate` if the
+    /// document already exists; pass `--force` to deliberately append to an existing scroll.
+    Append {
+        path: String,
+        file: Option<String>,
+        /// Append to an existing document; without this, an existing target errors with `Duplicate`.
+        #[arg(short = 'f', long)]
+        force: bool,
+    },
     /// Print document body (`DIR/FILE`).
     Cat {
         /// `directory/file` (absolute path).
@@ -181,12 +188,16 @@ pub(crate) enum Command {
     },
     /// Move or rename a directory or file (`mv SRC DST`).
     Mv { src: String, dst: String },
-    /// Create or replace a document (`DIR/FILE`).
+    /// Create a document (`DIR/FILE`). Default safe: errors with `Duplicate` if the
+    /// document already exists; pass `--force` to deliberately overwrite an existing scroll.
     Put {
         /// `directory/file`.
         path: String,
         /// Read from file instead of stdin.
         file: Option<String>,
+        /// Replace an existing document; without this, an existing target errors with `Duplicate`.
+        #[arg(short = 'f', long)]
+        force: bool,
     },
     /// Rebuild Tantivy: `/` = full rebuild, or one directory path for scoped reindex.
     Reindex {

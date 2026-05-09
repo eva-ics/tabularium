@@ -148,7 +148,7 @@ async fn handle_client_text(
                 Ok(x) => x,
                 Err(e) => return send_err(socket, e.to_string()).await,
             };
-            if let Err(e) = db.append_document_by_path(&p, &data).await {
+            if let Err(e) = db.append_document_by_path(&p, &data, true).await {
                 return send_err(socket, e.to_string()).await;
             }
             info!(

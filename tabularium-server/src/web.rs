@@ -359,7 +359,7 @@ async fn rest_put_document(
         .unwrap_or("");
     let content = normalize_put_content(extract_put_patch_content(ct, body, true).await?);
     let canon = rest_to_canonical(&rest);
-    st.db.put_document_by_path(&canon, &content).await?;
+    st.db.put_document_by_path(&canon, &content, true).await?;
     info!(
         target: "tabularium_server::api",
         path = %canon,
@@ -380,7 +380,9 @@ async fn rest_patch_document(
         .unwrap_or("");
     let content = extract_put_patch_content(ct, body, false).await?;
     let canon = rest_to_canonical(&rest);
-    st.db.append_document_by_path(&canon, &content).await?;
+    st.db
+        .append_document_by_path(&canon, &content, true)
+        .await?;
     info!(
         target: "tabularium_server::api",
         path = %canon,
@@ -544,6 +546,25 @@ fn get_str<'a>(m: &'a Map<String, Value>, key: &str) -> tabularium::Result<&'a s
     m.get(key)
         .and_then(|v| v.as_str())
         .ok_or_else(|| Error::InvalidInput(format!("missing string param {key}")))
+}
+
+/// Optional boolean RPC param. Missing / `null` defaults to `false`.
+/// Accepts JSON `true` / `false`, `"true"` / `"false"` / `"1"` / `"0"` (case-insensitive).
+fn get_optional_bool(m: &Map<String, Value>, key: &str) -> tabularium::Result<bool> {
+    match m.get(key) {
+        None | Some(Value::Null) => Ok(false),
+        Some(Value::Bool(b)) => Ok(*b),
+        Some(Value::String(s)) => match s.trim().to_ascii_lowercase().as_str() {
+            "true" | "1" | "yes" => Ok(true),
+            "false" | "0" | "no" | "" => Ok(false),
+            other => Err(Error::InvalidInput(format!(
+                "param {key}: expected boolean, got {other:?}"
+            ))),
+        },
+        _ => Err(Error::InvalidInput(format!(
+            "param {key}: expected boolean"
+        ))),
+    }
 }
 
 fn json_u32_loose(v: &Value, key: &str) -> tabularium::Result<u32> {
@@ -739,13 +760,15 @@ pub(crate) async fn dispatch_app_rpc(
         "put_document" => {
             let path = rpc_path(&m, "path")?;
             let content = normalize_put_content(get_str(&m, "content")?.to_owned());
+            let force = get_optional_bool(&m, "force")?;
             canonical_path_segments(&path)?;
-            st.db.put_document_by_path(&path, &content).await?;
+            st.db.put_document_by_path(&path, &content, force).await?;
             info!(
                 target: "tabularium_server::api",
                 method = "put_document",
                 path = %path,
                 op = "put",
+                force,
                 "RPC document write"
             );
             Ok(Value::Null)
@@ -780,12 +803,14 @@ pub(crate) async fn dispatch_app_rpc(
         "append_document" => {
             let path = rpc_path(&m, "path")?;
             let content = get_str(&m, "content")?;
-            st.db.append_document_by_path(&path, content).await?;
+            let force = get_optional_bool(&m, "force")?;
+            st.db.append_document_by_path(&path, content, force).await?;
             info!(
                 target: "tabularium_server::api",
                 method = "append_document",
                 path = %path,
                 append_len = content.len(),
+                force,
                 "RPC document write"
             );
             Ok(Value::Null)

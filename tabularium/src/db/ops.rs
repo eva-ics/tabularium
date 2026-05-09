@@ -51,22 +51,32 @@ impl<S: Storage> Database<S> {
     }
 
     /// Append to an existing file, or create it (and parent directories) if absent.
-    #[instrument(skip(self, path, to_append), err(Debug))]
+    ///
+    /// `force` controls behaviour when the target file already exists:
+    /// - `false` (safe default for agents): existing target → [`Error::Duplicate`]; missing target → create.
+    ///   The check-then-create is **atomic** at the storage layer (SQLite `UNIQUE(parent_id, name)`),
+    ///   so concurrent callers cannot both observe "missing" and both create.
+    /// - `true`: append to existing body, or create when missing (legacy upsert behaviour).
+    #[instrument(skip(self, path, to_append), fields(force), err(Debug))]
     pub async fn append_document_by_path(
         &self,
         path: impl AsRef<str> + Send,
         to_append: impl AsRef<str> + Send,
+        force: bool,
     ) -> Result<()> {
         let path = path.as_ref();
         let (parent, name) = parent_and_final_name(path)?;
         validate_entity_name(&name)?;
         self.storage.ensure_directory_path(&parent).await?;
         let piece = to_append.as_ref();
+        if !force {
+            self.create_file_in_directory(&parent, &name, piece).await?;
+            return Ok(());
+        }
         match self.resolve_file_path(path).await {
             Ok(fid) => self.append_document(fid, piece).await,
             Err(Error::NotFound(_)) => {
-                let id = self.storage.create_file(path, piece).await?;
-                self.reindex_file_in_search(id).await?;
+                self.create_file_in_directory(&parent, &name, piece).await?;
                 Ok(())
             }
             Err(e) => Err(e),
@@ -310,11 +320,18 @@ impl<S: Storage> Database<S> {
     }
 
     /// Create parent directories as needed, then create or replace file body.
-    #[instrument(skip(self, path, content), err(Debug))]
+    ///
+    /// `force` controls behaviour when the target file already exists:
+    /// - `false` (safe default for agents): existing target → [`Error::Duplicate`]; missing target → create.
+    ///   The check-then-create is **atomic** at the storage layer (SQLite `UNIQUE(parent_id, name)`),
+    ///   so concurrent callers cannot both observe "missing" and both create.
+    /// - `true`: replace existing body (legacy upsert behaviour) or create when missing.
+    #[instrument(skip(self, path, content), fields(force), err(Debug))]
     pub async fn put_document_by_path(
         &self,
         path: impl AsRef<str> + Send,
         content: impl AsRef<str> + Send,
+        force: bool,
     ) -> Result<()> {
         let path = path.as_ref();
         canonical_path_segments(path)?;
@@ -322,6 +339,10 @@ impl<S: Storage> Database<S> {
         validate_entity_name(&name)?;
         self.storage.ensure_directory_path(&parent).await?;
         let content = content.as_ref();
+        if !force {
+            self.create_file_in_directory(parent, name, content).await?;
+            return Ok(());
+        }
         match self.resolve_file_path(path).await {
             Ok(id) => {
                 self.update_document(id, content).await?;
@@ -385,7 +406,7 @@ impl<S: Storage> Database<S> {
                 ));
             }
             let body = self.get_document(fid).await?;
-            self.put_document_by_path(&dst_file, &body).await?;
+            self.put_document_by_path(&dst_file, &body, true).await?;
             return Ok(());
         }
 
@@ -437,7 +458,7 @@ impl<S: Storage> Database<S> {
                         .resolve_path(&src_child, Some(EntryKind::File))
                         .await?;
                     let body = self.get_document(fid).await?;
-                    self.put_document_by_path(&dst_child, &body).await?;
+                    self.put_document_by_path(&dst_child, &body, true).await?;
                 }
             }
         }

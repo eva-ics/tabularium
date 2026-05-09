@@ -326,7 +326,7 @@ async fn rpc_crud_roundtrip() {
     let body = json!({
         "jsonrpc": "2.0",
         "method": "put_document",
-        "params": { "path": path, "content": "\n\n" },
+        "params": { "path": path, "content": "\n\n", "force": true },
         "id": 5_i64,
     });
     let r = client
@@ -356,7 +356,7 @@ async fn rpc_crud_roundtrip() {
     let body = json!({
         "jsonrpc": "2.0",
         "method": "append_document",
-        "params": { "path": path, "content": "tail" },
+        "params": { "path": path, "content": "tail", "force": true },
         "id": 7_i64,
     });
     let r = client

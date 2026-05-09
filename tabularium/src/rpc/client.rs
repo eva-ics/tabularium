@@ -221,31 +221,71 @@ impl Client {
         serde_json::from_value(r).map_err(|e| Error::InvalidInput(e.to_string()))
     }
 
-    /// `put_document` RPC — create document, or replace body if it already exists.
+    /// `put_document` RPC — create document, failing with [`Error::Duplicate`] if it already exists.
+    /// For the legacy upsert behaviour (replace body when present), use [`Self::put_document_force`].
     pub async fn put_document(
         &self,
         path: impl AsRef<Path>,
         content: impl AsRef<str>,
     ) -> Result<()> {
-        let path = normalize_path_for_rpc(path)?;
-        let params = json!({
-            "path": path,
-            "content": content.as_ref(),
-        });
-        self.call("put_document", params).await?;
-        Ok(())
+        self.put_document_with_force(path, content, false).await
     }
 
-    /// `append_document` RPC.
-    pub async fn append_document(
+    /// `put_document` RPC with `force=true` — create or replace existing body (legacy upsert).
+    pub async fn put_document_force(
         &self,
         path: impl AsRef<Path>,
         content: impl AsRef<str>,
+    ) -> Result<()> {
+        self.put_document_with_force(path, content, true).await
+    }
+
+    async fn put_document_with_force(
+        &self,
+        path: impl AsRef<Path>,
+        content: impl AsRef<str>,
+        force: bool,
     ) -> Result<()> {
         let path = normalize_path_for_rpc(path)?;
         let params = json!({
             "path": path,
             "content": content.as_ref(),
+            "force": force,
+        });
+        self.call("put_document", params).await?;
+        Ok(())
+    }
+
+    /// `append_document` RPC — create document, failing with [`Error::Duplicate`] if it already exists.
+    /// For the legacy append-or-create behaviour, use [`Self::append_document_force`].
+    pub async fn append_document(
+        &self,
+        path: impl AsRef<Path>,
+        content: impl AsRef<str>,
+    ) -> Result<()> {
+        self.append_document_with_force(path, content, false).await
+    }
+
+    /// `append_document` RPC with `force=true` — append to existing body, or create when missing.
+    pub async fn append_document_force(
+        &self,
+        path: impl AsRef<Path>,
+        content: impl AsRef<str>,
+    ) -> Result<()> {
+        self.append_document_with_force(path, content, true).await
+    }
+
+    async fn append_document_with_force(
+        &self,
+        path: impl AsRef<Path>,
+        content: impl AsRef<str>,
+        force: bool,
+    ) -> Result<()> {
+        let path = normalize_path_for_rpc(path)?;
+        let params = json!({
+            "path": path,
+            "content": content.as_ref(),
+            "force": force,
         });
         self.call("append_document", params).await?;
         Ok(())

@@ -1103,9 +1103,10 @@ pub(crate) fn apply_shell_cwd(cmd: Command, shell_cwd: Option<&str>) -> Result<C
             directory: resolve_ls_directory(directory.as_deref(), shell_cwd)?,
             reverse,
         },
-        Command::Append { path, file } => Command::Append {
+        Command::Append { path, file, force } => Command::Append {
             path: resolve_shell_doc_path(&path, shell_cwd)?,
             file,
+            force,
         },
         Command::Cat { path, raw } => Command::Cat {
             path: resolve_shell_doc_path(&path, shell_cwd)?,
@@ -1118,9 +1119,10 @@ pub(crate) fn apply_shell_cwd(cmd: Command, shell_cwd: Option<&str>) -> Result<C
         Command::Ec { path } => Command::Ec {
             path: resolve_shell_doc_path(&path, shell_cwd)?,
         },
-        Command::Put { path, file } => Command::Put {
+        Command::Put { path, file, force } => Command::Put {
             path: resolve_shell_doc_path(&path, shell_cwd)?,
             file,
+            force,
         },
         Command::Rm { path, recursive } => Command::Rm {
             path: resolve_shell_rm_path(&path, recursive, shell_cwd)?,
@@ -1916,6 +1918,7 @@ mod shell_cwd_tests {
             Command::Put {
                 path: "subdir/doc".into(),
                 file: None,
+                force: false,
             },
             Some("xxx"),
         );
@@ -2021,6 +2024,7 @@ mod shell_cwd_tests {
                 Command::Put {
                     path: "d".into(),
                     file: None,
+                    force: false,
                 },
                 "c/d",
             ),
@@ -2028,6 +2032,7 @@ mod shell_cwd_tests {
                 Command::Append {
                     path: "d".into(),
                     file: None,
+                    force: false,
                 },
                 "c/d",
             ),
@@ -2371,6 +2376,7 @@ mod shell_cwd_tests {
             Command::Put {
                 path: "/cat/doc".into(),
                 file: None,
+                force: false,
             },
             Some("other"),
         );
@@ -2384,6 +2390,7 @@ mod shell_cwd_tests {
                 Command::Append {
                     path: "/c/d".into(),
                     file: None,
+                    force: false,
                 },
                 "c/d",
             ),

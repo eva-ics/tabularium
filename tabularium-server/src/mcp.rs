@@ -61,11 +61,11 @@ server_help — (no params) Text from config `server_help` path, or empty string
 methods — (no params) This catalog.
 
 get_document — path (absolute file).
-put_document — path, content (create or replace full body).
-create_document — path, content (new file; parent directory must exist).
-append_document — path, content (raw append; not for chat/meeting blocks — use say_document).
+put_document — path, content, force (default false). Create new document, or replace body when `force=true`. Existing target with `force=false` → `Duplicate` (-32002); atomic at storage layer (SQLite UNIQUE constraint).
+create_document — path, content (new file; parent directory must exist; always strict-create).
+append_document — path, content, force (default false). Create new document, or append to existing body when `force=true` (`force=true` appends — it does not replace; use put_document for full replacement). Existing target with `force=false` → `Duplicate` (-32002). Not for chat/meeting blocks — use say_document.
 append_if_not_contains — path, marker, content: atomically append `content` only if `marker` is **not** already a substring of the UTF-8 body (Rust `str::contains`; e.g. marker `DONE` matches inside `UNDONE`). **Document must exist** (errors if missing). Returns JSON `true` if appended, `false` if skipped.
-say_document — path, from_id (sender nickname), content. **Preferred for meetings, conversations, and task scrolls** — server appends a markdown block with the sender in the heading. **Do not prefix the nickname into content**; provide it via from_id only. **Target file must already exist** (use put_document or append_document to create).
+say_document — path, from_id (sender nickname), content. **Preferred for meetings, conversations, and task scrolls** — server appends a markdown block with the sender in the heading. **Do not prefix the nickname into content**; provide it via from_id only. **Target file must already exist** (use put_document or append_document to create). *Exempt from the `force` guard by design*: `say_document` is the only mutation rite that always appends to an existing scroll, because it cannot create new documents and operates exclusively on conversation/meeting contexts where appending is the intended action.
 list_directory — path optional (omit or empty for root `/`). Rows include modified_at; use this to walk the tree; there is no separate MCP find tool.
 search — query, path optional (subtree filter). Indexed full-text over document body, file name, and description.
 create_directory — path, description optional, parents optional (`true` = POSIX `mkdir -p`; default `false`).
@@ -188,6 +188,17 @@ struct PathArg {
 struct PathContent {
     path: String,
     content: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct PathContentForce {
+    path: String,
+    content: String,
+    /// Required `true` to mutate an existing document.
+    /// Default `false`: existing target → `Duplicate` (-32002); use this safe default for agents.
+    /// `true`: legacy upsert semantics (`put_document` replaces body, `append_document` appends bytes).
+    #[serde(default)]
+    force: bool,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -361,11 +372,16 @@ impl TabulariumMcp {
             .await
     }
 
-    #[tool(description = "Upsert document body (JSON-RPC put_document).")]
-    async fn put_document(&self, Parameters(p): Parameters<PathContent>) -> Result<String, String> {
+    #[tool(
+        description = "Write `content` to `path` (JSON-RPC put_document). **Default safe**: errors with `Duplicate` (-32002) if the document already exists; pass `force=true` to deliberately overwrite an existing body. Missing target is always created. The check-and-create is atomic at the storage layer (SQLite UNIQUE constraint), so concurrent callers cannot both win when `force=false`."
+    )]
+    async fn put_document(
+        &self,
+        Parameters(p): Parameters<PathContentForce>,
+    ) -> Result<String, String> {
         self.call_rpc_json(
             "put_document",
-            json!({ "path": p.path, "content": p.content }),
+            json!({ "path": p.path, "content": p.content, "force": p.force }),
         )
         .await
     }
@@ -383,15 +399,15 @@ impl TabulariumMcp {
     }
 
     #[tool(
-        description = "Append bytes to document (JSON-RPC append_document). Not for chat/meeting lines — use say_document so from_id is recorded."
+        description = "Append bytes to document (JSON-RPC append_document). Not for chat/meeting lines — use say_document so from_id is recorded. **Default safe**: errors with `Duplicate` (-32002) if the document already exists; pass `force=true` to deliberately append to an existing body. Missing target is always created. With `force=true` the call appends — it does not replace; use put_document for full replacement."
     )]
     async fn append_document(
         &self,
-        Parameters(p): Parameters<PathContent>,
+        Parameters(p): Parameters<PathContentForce>,
     ) -> Result<String, String> {
         self.call_rpc_json(
             "append_document",
-            json!({ "path": p.path, "content": p.content }),
+            json!({ "path": p.path, "content": p.content, "force": p.force }),
         )
         .await
     }

@@ -50,6 +50,30 @@ curl -sS -X POST "$BASE/rpc" -H 'Content-Type: application/json' -d '{
   "params":{"path":"/notes/readme"},
   "id":2
 }'
+
+# Safe-by-default put_document (create-only): existing target -> -32002 Duplicate.
+curl -sS -X POST "$BASE/rpc" -H 'Content-Type: application/json' -d '{
+  "jsonrpc":"2.0",
+  "method":"put_document",
+  "params":{"path":"/notes/new_scroll","content":"# fresh\n"},
+  "id":3
+}'
+
+# Deliberate overwrite: pass force=true.
+curl -sS -X POST "$BASE/rpc" -H 'Content-Type: application/json' -d '{
+  "jsonrpc":"2.0",
+  "method":"put_document",
+  "params":{"path":"/notes/new_scroll","content":"# replaced\n","force":true},
+  "id":4
+}'
+
+# Same guard for append_document (force=true appends to existing; missing target always creates).
+curl -sS -X POST "$BASE/rpc" -H 'Content-Type: application/json' -d '{
+  "jsonrpc":"2.0",
+  "method":"append_document",
+  "params":{"path":"/notes/new_scroll","content":"\nmore","force":true},
+  "id":5
+}'
 ```
 
 *Serve the Omnissiah; verify `Location` headers match your percent-encoded names.*

@@ -798,11 +798,15 @@ pub(crate) async fn execute(
                 client.set_entry_description(&path, &joined).await?;
             }
         }
-        Command::Put { path, file } => {
+        Command::Put { path, file, force } => {
             let content = read_input(file.as_deref())?;
             let path =
                 normalize_user_path(path.trim()).map_err(|e| -> BoxErr { e.to_string().into() })?;
-            client.put_document(&path, &content).await?;
+            if force {
+                client.put_document_force(&path, &content).await?;
+            } else {
+                client.put_document(&path, &content).await?;
+            }
         }
         Command::Import {
             directory,
@@ -825,11 +829,15 @@ pub(crate) async fn execute(
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
             cmd_export(client, &directory, &dest).await?;
         }
-        Command::Append { path, file } => {
+        Command::Append { path, file, force } => {
             let content = read_input(file.as_deref())?;
             let path =
                 normalize_user_path(path.trim()).map_err(|e| -> BoxErr { e.to_string().into() })?;
-            client.append_document(&path, &content).await?;
+            if force {
+                client.append_document_force(&path, &content).await?;
+            } else {
+                client.append_document(&path, &content).await?;
+            }
         }
         Command::Rm { path, recursive } => {
             let path = path.trim().to_string();
