@@ -5,6 +5,7 @@ use bma_ts::Timestamp;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteRow};
 use sqlx::{QueryBuilder, Row, SqlitePool};
 use tracing::instrument;
+use uuid::Uuid;
 
 use super::EntryId;
 use super::entry_kind::EntryKind;
@@ -24,8 +25,43 @@ async fn table_exists(pool: &SqlitePool, name: &str) -> Result<bool> {
     Ok(n > 0)
 }
 
+fn new_file_revision() -> String {
+    Uuid::new_v4().to_string()
+}
+
+async fn ensure_revision_column(pool: &SqlitePool) -> Result<()> {
+    let n: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('entries') WHERE name = 'revision'",
+    )
+    .fetch_one(pool)
+    .await?;
+    if n == 0 {
+        sqlx::query("ALTER TABLE entries ADD COLUMN revision TEXT")
+            .execute(pool)
+            .await?;
+    }
+    backfill_null_file_revisions(pool).await
+}
+
+async fn backfill_null_file_revisions(pool: &SqlitePool) -> Result<()> {
+    let ids: Vec<i64> =
+        sqlx::query_scalar("SELECT id FROM entries WHERE kind = 1 AND revision IS NULL")
+            .fetch_all(pool)
+            .await?;
+    for id in ids {
+        let u = new_file_revision();
+        sqlx::query("UPDATE entries SET revision = ? WHERE id = ? AND kind = 1")
+            .bind(&u)
+            .bind(id)
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
 async fn migrate(pool: &SqlitePool) -> Result<()> {
     if table_exists(pool, "entries").await? {
+        ensure_revision_column(pool).await?;
         return Ok(());
     }
     sqlx::query(
@@ -41,6 +77,7 @@ async fn migrate(pool: &SqlitePool) -> Result<()> {
     created_at INTEGER NOT NULL,
     modified_at INTEGER NOT NULL,
     accessed_at INTEGER NOT NULL,
+    revision TEXT,
     UNIQUE(parent_id, name),
     CHECK(parent_id != id OR id = 1),
     CHECK((kind = 0 AND content IS NULL AND size IS NULL) OR (kind = 1 AND content IS NOT NULL AND size IS NOT NULL))
@@ -56,8 +93,8 @@ async fn migrate(pool: &SqlitePool) -> Result<()> {
         .await?;
     let now = Timestamp::now();
     sqlx::query(
-        r"INSERT INTO entries (id, parent_id, kind, name, description, content, size, created_at, modified_at, accessed_at)
-         VALUES (1, 1, 0, '', NULL, NULL, NULL, ?, ?, ?)",
+        r"INSERT INTO entries (id, parent_id, kind, name, description, content, size, created_at, modified_at, accessed_at, revision)
+         VALUES (1, 1, 0, '', NULL, NULL, NULL, ?, ?, ?, NULL)",
     )
     .bind(now)
     .bind(now)
@@ -256,7 +293,8 @@ fn row_to_file_meta(row: &SqliteRow, canonical_path: String) -> Result<DocumentM
         row.try_get::<Timestamp, _>(3)?,
         row.try_get::<Timestamp, _>(4)?,
         row.try_get::<Timestamp, _>(5)?,
-        row.try_get::<i64, _>(6)?,
+        row.try_get::<Option<String>, _>(6)?,
+        row.try_get::<i64, _>(7)?,
     ))
 }
 
@@ -486,11 +524,12 @@ impl Storage for SqliteStorage {
             .resolve_path(&parent_path, Some(EntryKind::Dir))
             .await?;
         let now = Timestamp::now();
+        let rev = new_file_revision();
         let size = i64::try_from(content.as_ref().len())
             .map_err(|_| Error::InvalidInput("file content size overflow".into()))?;
         let id: i64 = sqlx::query_scalar(
-            r"INSERT INTO entries (parent_id, kind, name, description, content, size, created_at, modified_at, accessed_at)
-            VALUES (?, 1, ?, NULL, ?, ?, ?, ?, ?) RETURNING id",
+            r"INSERT INTO entries (parent_id, kind, name, description, content, size, created_at, modified_at, accessed_at, revision)
+            VALUES (?, 1, ?, NULL, ?, ?, ?, ?, ?, ?) RETURNING id",
         )
         .bind(parent_id.raw())
         .bind(&name)
@@ -499,6 +538,7 @@ impl Storage for SqliteStorage {
         .bind(now)
         .bind(now)
         .bind(now)
+        .bind(&rev)
         .fetch_one(&self.pool)
         .await
         .map_err(Self::map_sqlite_constraint)?;
@@ -524,14 +564,16 @@ impl Storage for SqliteStorage {
         new_content: impl AsRef<str> + Send,
     ) -> Result<()> {
         let now = Timestamp::now();
+        let rev = new_file_revision();
         let size = i64::try_from(new_content.as_ref().len())
             .map_err(|_| Error::InvalidInput("file content size overflow".into()))?;
         let r = sqlx::query(
-            "UPDATE entries SET content = ?, size = ?, modified_at = ? WHERE id = ? AND kind = 1",
+            "UPDATE entries SET content = ?, size = ?, modified_at = ?, revision = ? WHERE id = ? AND kind = 1",
         )
         .bind(new_content.as_ref())
         .bind(size)
         .bind(now)
+        .bind(&rev)
         .bind(file_id.raw())
         .execute(&self.pool)
         .await?;
@@ -541,19 +583,58 @@ impl Storage for SqliteStorage {
         Ok(())
     }
 
+    #[instrument(skip(self, new_content), fields(file_id = file_id.raw()), err(Debug))]
+    async fn update_file_if_revision_matches(
+        &self,
+        file_id: EntryId,
+        new_content: impl AsRef<str> + Send,
+        expected_revision: &str,
+    ) -> Result<()> {
+        let now = Timestamp::now();
+        let rev = new_file_revision();
+        let size = i64::try_from(new_content.as_ref().len())
+            .map_err(|_| Error::InvalidInput("file content size overflow".into()))?;
+        let r = sqlx::query(
+            "UPDATE entries SET content = ?, size = ?, modified_at = ?, revision = ? WHERE id = ? AND kind = 1 AND revision = ?",
+        )
+        .bind(new_content.as_ref())
+        .bind(size)
+        .bind(now)
+        .bind(&rev)
+        .bind(file_id.raw())
+        .bind(expected_revision)
+        .execute(&self.pool)
+        .await?;
+        if r.rows_affected() > 0 {
+            return Ok(());
+        }
+        let exists: Option<String> =
+            sqlx::query_scalar("SELECT revision FROM entries WHERE id = ? AND kind = 1")
+                .bind(file_id.raw())
+                .fetch_optional(&self.pool)
+                .await?;
+        match exists {
+            None => Err(Error::NotFound(format!("file {}", file_id.raw()))),
+            Some(_) => Err(Error::RevisionMismatch(format!("file {}", file_id.raw()))),
+        }
+    }
+
     #[instrument(skip(self, to_append), fields(file_id = file_id.raw()), err(Debug))]
     async fn append_file(&self, file_id: EntryId, to_append: impl AsRef<str> + Send) -> Result<()> {
         let now = Timestamp::now();
+        let rev = new_file_revision();
         let piece = to_append.as_ref();
         let r = sqlx::query(
             r"UPDATE entries SET
                 content = content || CASE WHEN substr(content, -1) = char(10) THEN '' ELSE char(10) END || ?,
                 modified_at = ?,
+                revision = ?,
                 size = length(content || CASE WHEN substr(content, -1) = char(10) THEN '' ELSE char(10) END || ?)
             WHERE id = ? AND kind = 1",
         )
         .bind(piece)
         .bind(now)
+        .bind(&rev)
         .bind(piece)
         .bind(file_id.raw())
         .execute(&self.pool)
@@ -567,11 +648,15 @@ impl Storage for SqliteStorage {
     #[instrument(skip(self), fields(file_id = file_id.raw()), err(Debug))]
     async fn bump_file_modified_at(&self, file_id: EntryId) -> Result<()> {
         let now = Timestamp::now();
-        let r = sqlx::query("UPDATE entries SET modified_at = ? WHERE id = ? AND kind = 1")
-            .bind(now)
-            .bind(file_id.raw())
-            .execute(&self.pool)
-            .await?;
+        let rev = new_file_revision();
+        let r = sqlx::query(
+            "UPDATE entries SET modified_at = ?, revision = ? WHERE id = ? AND kind = 1",
+        )
+        .bind(now)
+        .bind(&rev)
+        .bind(file_id.raw())
+        .execute(&self.pool)
+        .await?;
         if r.rows_affected() == 0 {
             return Err(Error::NotFound(format!("file {}", file_id.raw())));
         }
@@ -583,11 +668,15 @@ impl Storage for SqliteStorage {
         if entry_id.raw() == ROOT_ID {
             return Err(Error::InvalidInput("cannot set modified_at on root".into()));
         }
-        let r = sqlx::query("UPDATE entries SET modified_at = ? WHERE id = ?")
-            .bind(modified_at)
-            .bind(entry_id.raw())
-            .execute(&self.pool)
-            .await?;
+        let now_rev = new_file_revision();
+        let r = sqlx::query(
+            "UPDATE entries SET modified_at = ?, revision = CASE WHEN kind = 1 THEN ? ELSE revision END WHERE id = ?",
+        )
+        .bind(modified_at)
+        .bind(&now_rev)
+        .bind(entry_id.raw())
+        .execute(&self.pool)
+        .await?;
         if r.rows_affected() == 0 {
             return Err(Error::NotFound(format!("entry {}", entry_id.raw())));
         }
@@ -609,12 +698,14 @@ impl Storage for SqliteStorage {
             .resolve_path(new_parent_path, Some(EntryKind::Dir))
             .await?;
         let now = Timestamp::now();
+        let rev = new_file_revision();
         let r = sqlx::query(
-            "UPDATE entries SET parent_id = ?, name = ?, modified_at = ? WHERE id = ? AND kind = 1",
+            "UPDATE entries SET parent_id = ?, name = ?, modified_at = ?, revision = ? WHERE id = ? AND kind = 1",
         )
         .bind(new_parent.raw())
         .bind(new_name)
         .bind(now)
+        .bind(&rev)
         .bind(file_id.raw())
         .execute(&self.pool)
         .await;
@@ -628,13 +719,16 @@ impl Storage for SqliteStorage {
     #[instrument(skip(self, new_name), fields(file_id = file_id.raw()), err(Debug))]
     async fn rename_file(&self, file_id: EntryId, new_name: impl AsRef<str> + Send) -> Result<()> {
         let now = Timestamp::now();
-        let r =
-            sqlx::query("UPDATE entries SET name = ?, modified_at = ? WHERE id = ? AND kind = 1")
-                .bind(new_name.as_ref())
-                .bind(now)
-                .bind(file_id.raw())
-                .execute(&self.pool)
-                .await;
+        let rev = new_file_revision();
+        let r = sqlx::query(
+            "UPDATE entries SET name = ?, modified_at = ?, revision = ? WHERE id = ? AND kind = 1",
+        )
+        .bind(new_name.as_ref())
+        .bind(now)
+        .bind(&rev)
+        .bind(file_id.raw())
+        .execute(&self.pool)
+        .await;
         match r {
             Ok(r) if r.rows_affected() > 0 => Ok(()),
             Ok(_) => Err(Error::NotFound(format!("file {}", file_id.raw()))),
@@ -657,7 +751,7 @@ impl Storage for SqliteStorage {
     async fn list_directory(&self, dir_path: &str) -> Result<Vec<ListedEntry>> {
         let dir_id = self.resolve_path(dir_path, Some(EntryKind::Dir)).await?;
         let rows = sqlx::query(
-            r"SELECT id, kind, name, description, created_at, modified_at, accessed_at, size
+            r"SELECT id, kind, name, description, created_at, modified_at, accessed_at, revision, size
             FROM entries WHERE parent_id = ? AND id != parent_id ORDER BY kind, name",
         )
         .bind(dir_id.raw())
@@ -672,7 +766,8 @@ impl Storage for SqliteStorage {
             let created_at: Timestamp = row.try_get(4)?;
             let modified_at: Timestamp = row.try_get(5)?;
             let accessed_at: Timestamp = row.try_get(6)?;
-            let size: Option<i64> = row.try_get(7)?;
+            let revision: Option<String> = row.try_get(7)?;
+            let size: Option<i64> = row.try_get(8)?;
             let recursive_file_count = if kind == EntryKind::Dir {
                 recursive_file_count_under(&self.pool, id).await?
             } else {
@@ -686,6 +781,11 @@ impl Storage for SqliteStorage {
                 created_at,
                 modified_at,
                 accessed_at,
+                if kind == EntryKind::File {
+                    revision.clone()
+                } else {
+                    None
+                },
                 if kind == EntryKind::File { size } else { None },
                 recursive_file_count,
             ));
@@ -696,7 +796,7 @@ impl Storage for SqliteStorage {
     #[instrument(skip(self), fields(file_id = file_id.raw()), err(Debug))]
     async fn get_file_meta(&self, file_id: EntryId) -> Result<DocumentMeta> {
         let row = sqlx::query(
-            r"SELECT id, parent_id, name, created_at, modified_at, accessed_at, size
+            r"SELECT id, parent_id, name, created_at, modified_at, accessed_at, revision, size
             FROM entries WHERE id = ? AND kind = 1",
         )
         .bind(file_id.raw())
@@ -936,12 +1036,16 @@ impl Storage for SqliteStorage {
     async fn set_entry_description(&self, path: &str, description: Option<&str>) -> Result<()> {
         let id = self.resolve_path(path, None).await?;
         let now = Timestamp::now();
-        let r = sqlx::query("UPDATE entries SET description = ?, modified_at = ? WHERE id = ?")
-            .bind(description)
-            .bind(now)
-            .bind(id.raw())
-            .execute(&self.pool)
-            .await?;
+        let rev = new_file_revision();
+        let r = sqlx::query(
+            "UPDATE entries SET description = ?, modified_at = ?, revision = CASE WHEN kind = 1 THEN ? ELSE revision END WHERE id = ?",
+        )
+        .bind(description)
+        .bind(now)
+        .bind(&rev)
+        .bind(id.raw())
+        .execute(&self.pool)
+        .await?;
         if r.rows_affected() == 0 {
             return Err(Error::NotFound(path.to_string()));
         }

@@ -145,7 +145,9 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, msg): (StatusCode, String) = match &self.0 {
             Error::NotFound(s) => (StatusCode::NOT_FOUND, s.clone()),
-            Error::Duplicate(s) | Error::NotEmpty(s) => (StatusCode::CONFLICT, s.clone()),
+            Error::Duplicate(s) | Error::NotEmpty(s) | Error::RevisionMismatch(s) => {
+                (StatusCode::CONFLICT, s.clone())
+            }
             Error::InvalidInput(s) => (StatusCode::BAD_REQUEST, s.clone()),
             _ => (StatusCode::INTERNAL_SERVER_ERROR, self.0.to_string()),
         };
@@ -243,6 +245,7 @@ async fn list_directory_inner(st: &AppState, dir_path: &str) -> ApiResult<Json<V
                 "created_at": e.created_at(),
                 "modified_at": e.modified_at(),
                 "accessed_at": e.accessed_at(),
+                "revision": e.revision(),
                 "size_bytes": e.size_bytes(),
                 "recursive_file_count": e.recursive_file_count(),
             })
@@ -300,6 +303,7 @@ async fn get_or_list(
                 "created_at": meta.created_at(),
                 "modified_at": meta.modified_at(),
                 "accessed_at": meta.accessed_at(),
+                "revision": meta.revision(),
                 "size_bytes": meta.size_bytes(),
             }))
             .into_response())
@@ -329,7 +333,7 @@ async fn rest_post_legacy_document(
     canonical_path_segments(&doc_path).map_err(ApiError)?;
     let id = st
         .db
-        .create_document_at_path(&doc_path, &body.content)
+        .create_document_at_path(&doc_path, &body.content, false, None)
         .await
         .map_err(ApiError)?;
     let loc = format!("/api/doc/{}", doc_path.trim_start_matches('/'));
@@ -359,7 +363,9 @@ async fn rest_put_document(
         .unwrap_or("");
     let content = normalize_put_content(extract_put_patch_content(ct, body, true).await?);
     let canon = rest_to_canonical(&rest);
-    st.db.put_document_by_path(&canon, &content, true).await?;
+    st.db
+        .put_document_by_path(&canon, &content, true, None)
+        .await?;
     info!(
         target: "tabularium_server::api",
         path = %canon,
@@ -522,6 +528,11 @@ async fn rpc_dispatch(State(st): State<AppState>, body: Bytes) -> Json<Value> {
                 tabularium::jsonrpc_codes::DUPLICATE_RESOURCE,
                 &e.to_string(),
             )),
+            Error::RevisionMismatch(_) => Json(rpc_error(
+                req.id,
+                tabularium::jsonrpc_codes::REVISION_MISMATCH,
+                &e.to_string(),
+            )),
             _ => Json(rpc_error(req.id, -32603, &e.to_string())),
         },
     }
@@ -550,6 +561,24 @@ fn get_str<'a>(m: &'a Map<String, Value>, key: &str) -> tabularium::Result<&'a s
 
 /// Optional boolean RPC param. Missing / `null` defaults to `false`.
 /// Accepts JSON `true` / `false`, `"true"` / `"false"` / `"1"` / `"0"` (case-insensitive).
+fn get_optional_uuid_str(m: &Map<String, Value>, key: &str) -> tabularium::Result<Option<String>> {
+    match m.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(s)) => {
+            let t = s.trim();
+            if t.is_empty() {
+                return Err(Error::InvalidInput(format!("param {key}: empty uuid")));
+            }
+            uuid::Uuid::parse_str(t)
+                .map_err(|_| Error::InvalidInput(format!("param {key}: invalid uuid")))?;
+            Ok(Some(t.to_string()))
+        }
+        _ => Err(Error::InvalidInput(format!(
+            "param {key}: expected uuid string or null"
+        ))),
+    }
+}
+
 fn get_optional_bool(m: &Map<String, Value>, key: &str) -> tabularium::Result<bool> {
     match m.get(key) {
         None | Some(Value::Null) => Ok(false),
@@ -675,6 +704,7 @@ pub(crate) async fn dispatch_app_rpc(
                         "created_at": e.created_at(),
                         "modified_at": e.modified_at(),
                         "accessed_at": e.accessed_at(),
+                        "revision": e.revision(),
                         "size_bytes": e.size_bytes(),
                         "recursive_file_count": e.recursive_file_count(),
                     })
@@ -737,6 +767,7 @@ pub(crate) async fn dispatch_app_rpc(
                         "created_at": d.created_at(),
                         "modified_at": d.modified_at(),
                         "accessed_at": d.accessed_at(),
+                        "revision": d.revision(),
                         "size_bytes": d.size_bytes().unwrap_or(0),
                     })
                 })
@@ -747,7 +778,13 @@ pub(crate) async fn dispatch_app_rpc(
             let path = rpc_path(&m, "path")?;
             let content = get_str(&m, "content")?;
             canonical_path_segments(&path)?;
-            let id = st.db.create_document_at_path(&path, content).await?;
+            let force = get_optional_bool(&m, "force")?;
+            let only = get_optional_uuid_str(&m, "only_if_revision")?;
+            let id = st
+                .db
+                .create_document_at_path(&path, content, force, only.as_deref())
+                .await?;
+            let meta = st.db.document_ref_by_path(&path).await?;
             info!(
                 target: "tabularium_server::api",
                 method = "create_document",
@@ -755,14 +792,21 @@ pub(crate) async fn dispatch_app_rpc(
                 document_id = id.raw(),
                 "RPC document write"
             );
-            Ok(json!(id.raw()))
+            Ok(json!({
+                "id": id.raw(),
+                "revision": meta.revision(),
+            }))
         }
         "put_document" => {
             let path = rpc_path(&m, "path")?;
             let content = normalize_put_content(get_str(&m, "content")?.to_owned());
             let force = get_optional_bool(&m, "force")?;
+            let only = get_optional_uuid_str(&m, "only_if_revision")?;
             canonical_path_segments(&path)?;
-            st.db.put_document_by_path(&path, &content, force).await?;
+            st.db
+                .put_document_by_path(&path, &content, force, only.as_deref())
+                .await?;
+            let meta = st.db.document_ref_by_path(&path).await?;
             info!(
                 target: "tabularium_server::api",
                 method = "put_document",
@@ -771,7 +815,7 @@ pub(crate) async fn dispatch_app_rpc(
                 force,
                 "RPC document write"
             );
-            Ok(Value::Null)
+            Ok(json!({ "revision": meta.revision() }))
         }
         "delete_document" => {
             let path = rpc_path(&m, "path")?;
@@ -791,6 +835,7 @@ pub(crate) async fn dispatch_app_rpc(
             let content = get_str(&m, "content")?;
             let fid = st.db.resolve_existing_file_path(&path).await?;
             st.db.update_document(fid, content).await?;
+            let meta = st.db.get_document_meta(fid).await?;
             info!(
                 target: "tabularium_server::api",
                 method = method,
@@ -798,13 +843,14 @@ pub(crate) async fn dispatch_app_rpc(
                 document_id = fid.raw(),
                 "RPC document write"
             );
-            Ok(Value::Null)
+            Ok(json!({ "revision": meta.revision() }))
         }
         "append_document" => {
             let path = rpc_path(&m, "path")?;
             let content = get_str(&m, "content")?;
             let force = get_optional_bool(&m, "force")?;
             st.db.append_document_by_path(&path, content, force).await?;
+            let meta = st.db.document_ref_by_path(&path).await?;
             info!(
                 target: "tabularium_server::api",
                 method = "append_document",
@@ -813,7 +859,7 @@ pub(crate) async fn dispatch_app_rpc(
                 force,
                 "RPC document write"
             );
-            Ok(Value::Null)
+            Ok(json!({ "revision": meta.revision() }))
         }
         "append_if_not_contains" => {
             let path = rpc_path(&m, "path")?;
@@ -824,6 +870,7 @@ pub(crate) async fn dispatch_app_rpc(
                 .db
                 .append_if_not_contains_by_path(&path, marker, content)
                 .await?;
+            let meta = st.db.document_ref_by_path(&path).await?;
             info!(
                 target: "tabularium_server::api",
                 method = "append_if_not_contains",
@@ -833,13 +880,17 @@ pub(crate) async fn dispatch_app_rpc(
                 modified,
                 "RPC conditional append"
             );
-            Ok(Value::Bool(modified))
+            Ok(json!({
+                "appended": modified,
+                "revision": meta.revision(),
+            }))
         }
         "say_document" => {
             let path = rpc_path(&m, "path")?;
             let from_id = get_str(&m, "from_id")?;
             let content = get_str(&m, "content")?;
             st.db.say_document_by_path(&path, from_id, content).await?;
+            let meta = st.db.document_ref_by_path(&path).await?;
             info!(
                 target: "tabularium_server::api",
                 method = "say_document",
@@ -847,7 +898,7 @@ pub(crate) async fn dispatch_app_rpc(
                 from_id = %from_id,
                 "RPC document write"
             );
-            Ok(Value::Null)
+            Ok(json!({ "revision": meta.revision() }))
         }
         "touch_document" => {
             let path = rpc_path(&m, "path")?;
@@ -859,20 +910,27 @@ pub(crate) async fn dispatch_app_rpc(
                 })?),
             };
             st.db.touch_document_by_path(&path, modified_at).await?;
+            let meta = match st.db.document_ref_by_path(&path).await {
+                Ok(m) => m,
+                Err(_) => {
+                    return Ok(json!({ "revision": Value::Null }));
+                }
+            };
             info!(
                 target: "tabularium_server::api",
                 method = "touch_document",
                 path = %path,
                 "RPC document write"
             );
-            Ok(Value::Null)
+            Ok(json!({ "revision": meta.revision() }))
         }
         "rename_document" => {
             let path = rpc_path(&m, "path")?;
             let new_name = get_str(&m, "new_name")?;
             let fid = st.db.resolve_existing_file_path(&path).await?;
             st.db.rename_document(fid, new_name).await?;
-            Ok(Value::Null)
+            let meta = st.db.get_document_meta(fid).await?;
+            Ok(json!({ "revision": meta.revision() }))
         }
         "move_document" => {
             let path = rpc_path(&m, "path")?;
@@ -883,7 +941,8 @@ pub(crate) async fn dispatch_app_rpc(
             let (parent, name) = tabularium::resource_path::parent_and_final_name(&new_path)
                 .map_err(RpcAppError::Other)?;
             st.db.move_document_to_directory(fid, &parent, name).await?;
-            Ok(Value::Null)
+            let meta = st.db.get_document_meta(fid).await?;
+            Ok(json!({ "revision": meta.revision() }))
         }
         "copy_entries" => {
             let src = rpc_path(&m, "src")?;
@@ -905,6 +964,7 @@ pub(crate) async fn dispatch_app_rpc(
                 "created_at": meta.created_at(),
                 "modified_at": meta.modified_at(),
                 "accessed_at": meta.accessed_at(),
+                "revision": meta.revision(),
                 "size_bytes": meta.size_bytes(),
             }))
         }
@@ -932,6 +992,7 @@ pub(crate) async fn dispatch_app_rpc(
                 "created_at": meta.created_at(),
                 "modified_at": meta.modified_at(),
                 "accessed_at": meta.accessed_at(),
+                "revision": meta.revision(),
                 "size_bytes": meta.size_bytes(),
             }))
         }
@@ -1048,6 +1109,7 @@ pub(crate) async fn dispatch_app_rpc(
                 "created_at": meta.created_at(),
                 "modified_at": meta.modified_at(),
                 "accessed_at": meta.accessed_at(),
+                "revision": meta.revision(),
             }))
         }
         "test" => {
@@ -1081,7 +1143,13 @@ pub(crate) async fn dispatch_app_rpc(
                         .set_entry_description(&path, opt)
                         .await
                         .map_err(RpcAppError::Other)?;
-                    Ok(Value::Null)
+                    match st.db.resolve_existing_file_path(&path).await {
+                        Ok(fid) => {
+                            let meta = st.db.get_document_meta(fid).await?;
+                            Ok(json!({ "revision": meta.revision() }))
+                        }
+                        Err(_) => Ok(json!({ "revision": Value::Null })),
+                    }
                 }
             }
         }

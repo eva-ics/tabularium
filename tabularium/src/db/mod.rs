@@ -354,6 +354,26 @@ impl<S: Storage> Database<S> {
     }
 
     #[instrument(
+        skip(self, new_content),
+        fields(file_id = file_id.raw(), new_len = new_content.as_ref().len()),
+        err(Debug)
+    )]
+    pub async fn update_document_if_revision(
+        &self,
+        file_id: EntryId,
+        new_content: impl AsRef<str> + Send,
+        expected_revision: &str,
+    ) -> Result<()> {
+        self.storage
+            .update_file_if_revision_matches(file_id, new_content.as_ref(), expected_revision)
+            .await?;
+        self.reindex_file_in_search(file_id).await?;
+        self.cache.invalidate(&file_id).await;
+        self.bump_doc_wait(file_id);
+        Ok(())
+    }
+
+    #[instrument(
         skip(self, to_append),
         fields(file_id = file_id.raw(), append_len = to_append.as_ref().len()),
         err(Debug)
@@ -444,7 +464,7 @@ impl<S: Storage> Database<S> {
                     self.bump_doc_wait(fid);
                     Ok(())
                 }
-                Err(Error::NotFound(_)) => self.put_document_by_path(path, "", false).await,
+                Err(Error::NotFound(_)) => self.put_document_by_path(path, "", false, None).await,
                 Err(e) => Err(e),
             },
             Some(ts) => {
@@ -465,7 +485,7 @@ impl<S: Storage> Database<S> {
                         Ok(())
                     }
                     Err(Error::NotFound(_)) => {
-                        self.put_document_by_path(path, "", false).await?;
+                        self.put_document_by_path(path, "", false, None).await?;
                         let id = self.storage.resolve_path(path, None).await?;
                         self.storage.set_entry_modified_at(id, ts).await?;
                         if self
@@ -781,7 +801,7 @@ mod tests {
         db.create_directory("/c", None, false).await.unwrap();
 
         // Initial create via put(force=false) on missing target succeeds.
-        db.put_document_by_path("/c/d", "first", false)
+        db.put_document_by_path("/c/d", "first", false, None)
             .await
             .unwrap();
         let id = db.document_ref_by_path("/c/d").await.unwrap().id();
@@ -790,7 +810,7 @@ mod tests {
 
         // put(force=false) on existing → Duplicate (no body change).
         let err = db
-            .put_document_by_path("/c/d", "OVERWRITE", false)
+            .put_document_by_path("/c/d", "OVERWRITE", false, None)
             .await
             .unwrap_err();
         assert!(matches!(err, crate::Error::Duplicate(_)), "got {err:?}");
@@ -817,13 +837,13 @@ mod tests {
         let db = SqliteDatabase::init(&uri, &idx_path, 0).await.unwrap();
         db.create_directory("/c", None, false).await.unwrap();
 
-        db.put_document_by_path("/c/d", "first", false)
+        db.put_document_by_path("/c/d", "first", false, None)
             .await
             .unwrap();
         let id = db.document_ref_by_path("/c/d").await.unwrap().id();
 
         // put(force=true) on existing → overwrite.
-        db.put_document_by_path("/c/d", "second", true)
+        db.put_document_by_path("/c/d", "second", true, None)
             .await
             .unwrap();
         let body = db.get_document(id).await.unwrap();
@@ -857,7 +877,7 @@ mod tests {
             let db = Arc::clone(&db);
             let payload = format!("agent-{i}");
             handles.push(tokio::spawn(async move {
-                db.put_document_by_path(path, &payload, false).await
+                db.put_document_by_path(path, &payload, false, None).await
             }));
         }
 
@@ -1118,6 +1138,35 @@ mod tests {
         let id = db.resolve_file_path("/c/d").await.unwrap();
         let body = db.get_document(id).await.unwrap();
         assert_eq!(body.matches(marker).count(), 1);
+    }
+
+    #[tokio::test]
+    async fn file_revision_stable_on_read_advances_on_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("rev.db");
+        let idx_path = dir.path().join("rev.idx");
+        let uri = format!("sqlite://{}", db_path.display());
+        let db = SqliteDatabase::init(&uri, &idx_path, 0).await.unwrap();
+        db.create_directory("/rev", None, false).await.unwrap();
+        let id = db
+            .create_document_at_path("/rev/f", "body", false, None)
+            .await
+            .unwrap();
+        let rev0 = db
+            .document_ref_by_path("/rev/f")
+            .await
+            .unwrap()
+            .revision()
+            .expect("revision")
+            .to_string();
+        db.get_document(id).await.unwrap();
+        let meta_read = db.document_ref_by_path("/rev/f").await.unwrap();
+        let rev_after_read = meta_read.revision().unwrap();
+        assert_eq!(rev_after_read, rev0.as_str());
+        db.update_document(id, "next").await.unwrap();
+        let meta2 = db.document_ref_by_path("/rev/f").await.unwrap();
+        let rev2 = meta2.revision().unwrap();
+        assert_ne!(rev2, rev0.as_str());
     }
 
     #[tokio::test]

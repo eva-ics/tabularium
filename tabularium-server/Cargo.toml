@@ -34,6 +34,7 @@ tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal
 tokio-util = { version = "0.7" }
 toml = "0.8"
 tracing = "0.1"
+uuid = "1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 urlencoding = "2"
 
@@ -44,3 +45,4 @@ serde_json = "1"
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "net", "rt", "time"] }
 tokio-tungstenite = { version = "0.26", default-features = false, features = ["connect"] }
+uuid = "1"

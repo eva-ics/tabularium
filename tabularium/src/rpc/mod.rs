@@ -9,6 +9,6 @@
 mod client;
 
 pub use client::{
-    Client, DocumentBody, DocumentMetaRow, GrepLineRow, ListedEntryRow, SearchHitRow, ServerTest,
-    StatRow, WcRow,
+    Client, CreateDocumentReply, DocumentBody, DocumentMetaRow, GrepLineRow, ListedEntryRow,
+    SearchHitRow, ServerTest, StatRow, WcRow,
 };

@@ -53,6 +53,15 @@ pub trait Storage: Send + Sync {
         new_content: impl AsRef<str> + Send,
     ) -> Result<()>;
 
+    /// Replace file body **only if** the stored `revision` equals `expected_revision` (UUID string).
+    /// Assigns a new UUID v4 revision on success. [`crate::Error::RevisionMismatch`] when the row exists but revision differs.
+    async fn update_file_if_revision_matches(
+        &self,
+        file_id: EntryId,
+        new_content: impl AsRef<str> + Send,
+        expected_revision: &str,
+    ) -> Result<()>;
+
     async fn append_file(&self, file_id: EntryId, to_append: impl AsRef<str> + Send) -> Result<()>;
 
     /// Bump `modified_at` only (content and `created_at` unchanged).

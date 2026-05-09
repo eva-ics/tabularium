@@ -49,7 +49,9 @@ async fn mkdir_parents_idempotent_existing_leaf() {
 async fn mkdir_parents_rejects_file_segment() {
     let (_d, uri, idx) = temp_db();
     let db = SqliteDatabase::init(&uri, &idx, 0).await.unwrap();
-    db.create_document_at_path("/notdir", "x").await.unwrap();
+    db.create_document_at_path("/notdir", "x", false, None)
+        .await
+        .unwrap();
     let err = db
         .create_directory("/notdir/inside", None, true)
         .await
@@ -84,7 +86,7 @@ async fn root_file_listing_and_resolve() {
     let (_d, uri, idx) = temp_db();
     let db = SqliteDatabase::init(&uri, &idx, 0).await.unwrap();
     let id = db
-        .create_document_at_path("/root_doc", "body-root")
+        .create_document_at_path("/root_doc", "body-root", false, None)
         .await
         .unwrap();
     assert_eq!(db.get_document(id).await.unwrap(), "body-root");

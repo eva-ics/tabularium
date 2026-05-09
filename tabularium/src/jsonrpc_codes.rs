@@ -5,3 +5,6 @@
 
 /// Document or directory name already exists ([`crate::Error::Duplicate`]).
 pub const DUPLICATE_RESOURCE: i32 = -32002;
+
+/// Compare-and-swap write rejected: stored file revision differs ([`crate::Error::RevisionMismatch`]).
+pub const REVISION_MISMATCH: i32 = -32003;

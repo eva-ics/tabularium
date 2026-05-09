@@ -12,6 +12,8 @@ pub enum Error {
     NotFound(String),
     #[error("duplicate: {0}")]
     Duplicate(String),
+    #[error("revision mismatch: {0}")]
+    RevisionMismatch(String),
     #[error("not empty: {0}")]
     NotEmpty(String),
     #[error("invalid input: {0}")]

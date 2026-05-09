@@ -28,6 +28,7 @@ db = [
     "dep:tantivy",
     "dep:tokio",
     "dep:tracing",
+    "dep:uuid",
 ]
 ## Typed JSON-RPC client (`reqwest`). Implies `db` (shared id/error types).
 client = [
@@ -57,6 +58,7 @@ thiserror = "2"
 tokio = { version = "1", features = ["net", "rt-multi-thread", "macros", "sync", "time"], optional = true }
 tokio-tungstenite = { version = "0.26", default-features = false, features = ["connect", "rustls-tls-webpki-roots"], optional = true }
 tracing = { version = "0.1", optional = true }
+uuid = { version = "1", features = ["v4"], optional = true }
 
 [dev-dependencies]
 tempfile = "3"

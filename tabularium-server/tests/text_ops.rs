@@ -135,6 +135,12 @@ async fn rpc_text_ops_match_known_content() {
         i64::try_from(content.len()).unwrap()
     );
     assert_eq!(v["result"]["line_count"], 3);
+    assert!(
+        v["result"]["revision"]
+            .as_str()
+            .is_some_and(|s| uuid::Uuid::parse_str(s).is_ok()),
+        "{v:?}"
+    );
 }
 
 #[tokio::test]

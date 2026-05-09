@@ -11,7 +11,29 @@ use crate::resource_path::normalize_path_for_rpc;
 use crate::text_lines::TailMode;
 use crate::{EntryId, Error, Result, Timestamp};
 
-use crate::jsonrpc_codes::DUPLICATE_RESOURCE;
+use crate::jsonrpc_codes::{DUPLICATE_RESOURCE, REVISION_MISMATCH};
+
+/// Successful [`Client::create_document`] payload (`id` + UUID `revision` string).
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct CreateDocumentReply {
+    id: EntryId,
+    revision: String,
+}
+
+impl CreateDocumentReply {
+    pub fn id(&self) -> EntryId {
+        self.id
+    }
+
+    pub fn revision(&self) -> &str {
+        &self.revision
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct AppendIfNotContainsReply {
+    appended: bool,
+}
 
 /// HTTP JSON-RPC client for a tabularium server (`POST` to `{base}/rpc`).
 pub struct Client {
@@ -100,6 +122,8 @@ impl Client {
                     .filter(|s| !s.is_empty())
                     .unwrap_or(msg.as_str());
                 Error::Duplicate(detail.to_string())
+            } else if code == REVISION_MISMATCH {
+                Error::RevisionMismatch(msg)
             } else {
                 Error::InvalidInput(msg)
             });
@@ -211,7 +235,7 @@ impl Client {
         &self,
         path: impl AsRef<Path>,
         content: impl AsRef<str>,
-    ) -> Result<EntryId> {
+    ) -> Result<CreateDocumentReply> {
         let path = normalize_path_for_rpc(path)?;
         let params = json!({
             "path": path,
@@ -305,7 +329,9 @@ impl Client {
             "content": content.as_ref(),
         });
         let r = self.call("append_if_not_contains", params).await?;
-        serde_json::from_value(r).map_err(|e| Error::InvalidInput(e.to_string()))
+        let reply: AppendIfNotContainsReply =
+            serde_json::from_value(r).map_err(|e| Error::InvalidInput(e.to_string()))?;
+        Ok(reply.appended)
     }
 
     /// `say_document` RPC — server appends a markdown chat block (`## from_id`, body, trailing blank line).
@@ -392,6 +418,7 @@ impl Client {
                     created_at: r.created_at,
                     modified_at: r.modified_at,
                     accessed_at: r.accessed_at,
+                    revision: r.revision,
                     size_bytes: r.size_bytes.unwrap_or(0),
                 }
             })
@@ -654,6 +681,8 @@ pub struct StatRow {
     created_at: Timestamp,
     modified_at: Timestamp,
     accessed_at: Timestamp,
+    #[serde(default)]
+    revision: Option<String>,
 }
 
 impl StatRow {
@@ -698,6 +727,10 @@ impl StatRow {
     pub fn accessed_at(&self) -> Timestamp {
         self.accessed_at
     }
+
+    pub fn revision(&self) -> Option<&str> {
+        self.revision.as_deref()
+    }
 }
 
 /// `wc` RPC payload.
@@ -738,6 +771,8 @@ pub struct ListedEntryRow {
     pub modified_at: Timestamp,
     pub accessed_at: Timestamp,
     #[serde(default)]
+    pub revision: Option<String>,
+    #[serde(default)]
     pub size_bytes: Option<i64>,
     #[serde(default)]
     pub recursive_file_count: u64,
@@ -771,6 +806,10 @@ impl ListedEntryRow {
     pub fn recursive_file_count(&self) -> u64 {
         self.recursive_file_count
     }
+
+    pub fn revision(&self) -> Option<&str> {
+        self.revision.as_deref()
+    }
 }
 
 /// Document listing row from `list_documents`.
@@ -782,6 +821,8 @@ pub struct DocumentMetaRow {
     created_at: Timestamp,
     modified_at: Timestamp,
     accessed_at: Timestamp,
+    #[serde(default)]
+    revision: Option<String>,
     size_bytes: i64,
 }
 
@@ -812,6 +853,10 @@ impl DocumentMetaRow {
 
     pub fn size_bytes(&self) -> i64 {
         self.size_bytes
+    }
+
+    pub fn revision(&self) -> Option<&str> {
+        self.revision.as_deref()
     }
 }
 
@@ -870,6 +915,8 @@ pub struct DocumentBody {
     created_at: Timestamp,
     modified_at: Timestamp,
     accessed_at: Timestamp,
+    #[serde(default)]
+    revision: Option<String>,
     size_bytes: i64,
 }
 
@@ -913,6 +960,10 @@ impl DocumentBody {
 
     pub fn size_bytes(&self) -> i64 {
         self.size_bytes
+    }
+
+    pub fn revision(&self) -> Option<&str> {
+        self.revision.as_deref()
     }
 }
 

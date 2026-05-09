@@ -42,13 +42,13 @@ def test_rpc_append_if_not_contains_roundtrip():
         "append_if_not_contains",
         {"path": path, "marker": "OMEGA", "content": "\nOMEGA\n"},
     )
-    assert r1.get("result") is True, r1
+    assert r1.get("result", {}).get("appended") is True, r1
 
     r2 = _rpc(
         "append_if_not_contains",
         {"path": path, "marker": "OMEGA", "content": "\nOMEGA\n"},
     )
-    assert r2.get("result") is False, r2
+    assert r2.get("result", {}).get("appended") is False, r2
 
     r = requests.get(f"{base}/api/doc/{cat}/py_ainc_doc", timeout=10)
     r.raise_for_status()

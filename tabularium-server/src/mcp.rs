@@ -60,18 +60,18 @@ help — (no params) Base doctrine + short tool index.
 server_help — (no params) Text from config `server_help` path, or empty string.
 methods — (no params) This catalog.
 
-get_document — path (absolute file).
-put_document — path, content, force (default false). Create new document, or replace body when `force=true`. Existing target with `force=false` → `Duplicate` (-32002); atomic at storage layer (SQLite UNIQUE constraint).
-create_document — path, content (new file; parent directory must exist; always strict-create).
+get_document — path (absolute file). Result includes `revision` (UUID string) for files.
+put_document — path, content, force (default false), only_if_revision optional (UUID string). Create new document, or replace body when `force=true`. With `only_if_revision`, target must exist and revision must match — else `NotFound` or `RevisionMismatch` (-32003); overrides stale `force`. Existing target with `force=false` and no `only_if_revision` → `Duplicate` (-32002); atomic at storage layer (SQLite UNIQUE constraint).
+create_document — path, content, force optional (default false), only_if_revision optional. Strict create when `force=false`; missing path + `only_if_revision` → `NotFound`. `force=true` replaces an existing file; use `only_if_revision` for guarded overwrite.
 append_document — path, content, force (default false). Create new document, or append to existing body when `force=true` (`force=true` appends — it does not replace; use put_document for full replacement). Existing target with `force=false` → `Duplicate` (-32002). Not for chat/meeting blocks — use say_document.
-append_if_not_contains — path, marker, content: atomically append `content` only if `marker` is **not** already a substring of the UTF-8 body (Rust `str::contains`; e.g. marker `DONE` matches inside `UNDONE`). **Document must exist** (errors if missing). Returns JSON `true` if appended, `false` if skipped.
+append_if_not_contains — path, marker, content: atomically append `content` only if `marker` is **not** already a substring of the UTF-8 body (Rust `str::contains`; e.g. marker `DONE` matches inside `UNDONE`). **Document must exist** (errors if missing). Returns JSON `{ "appended": bool, "revision": string }`.
 say_document — path, from_id (sender nickname), content. **Preferred for meetings, conversations, and task scrolls** — server appends a markdown block with the sender in the heading. **Do not prefix the nickname into content**; provide it via from_id only. **Target file must already exist** (use put_document or append_document to create). *Exempt from the `force` guard by design*: `say_document` is the only mutation rite that always appends to an existing scroll, because it cannot create new documents and operates exclusively on conversation/meeting contexts where appending is the intended action.
-list_directory — path optional (omit or empty for root `/`). Rows include modified_at; use this to walk the tree; there is no separate MCP find tool.
+list_directory — path optional (omit or empty for root `/`). Rows include modified_at and `revision` (files only); use this to walk the tree; there is no separate MCP find tool.
 search — query, path optional (subtree filter). Indexed full-text over document body, file name, and description.
 create_directory — path, description optional, parents optional (`true` = POSIX `mkdir -p`; default `false`).
 describe — path; optional description string (omit to read; empty string clears).
 document_exists — path (wire RPC name `exists`; tests file only).
-stat — path.
+stat — path (includes `revision` for files).
 wc — path.
 head — path, lines optional (default 10 like GNU head); number or string integer (`0` = zero lines, not unlimited).
 tail — path, lines optional (default 10 last lines like GNU tail); number, string integer (`0` = zero lines), or "+N" from-line form.
@@ -185,9 +185,15 @@ struct PathArg {
 }
 
 #[derive(Deserialize, JsonSchema)]
-struct PathContent {
+struct PathContentCreate {
     path: String,
     content: String,
+    /// Overwrite existing target when `true`; optional compare-and-swap via `only_if_revision`.
+    #[serde(default)]
+    force: bool,
+    /// When set, asserts the path names an existing file whose current revision matches this UUID string.
+    #[serde(default)]
+    only_if_revision: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -199,6 +205,9 @@ struct PathContentForce {
     /// `true`: legacy upsert semantics (`put_document` replaces body, `append_document` appends bytes).
     #[serde(default)]
     force: bool,
+    /// Compare-and-swap: replace only if the stored revision matches (missing file → `NotFound`).
+    #[serde(default)]
+    only_if_revision: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -381,19 +390,31 @@ impl TabulariumMcp {
     ) -> Result<String, String> {
         self.call_rpc_json(
             "put_document",
-            json!({ "path": p.path, "content": p.content, "force": p.force }),
+            json!({
+                "path": p.path,
+                "content": p.content,
+                "force": p.force,
+                "only_if_revision": p.only_if_revision,
+            }),
         )
         .await
     }
 
-    #[tool(description = "Create a new file (JSON-RPC create_document).")]
+    #[tool(
+        description = "Create a new file (JSON-RPC create_document). Optional force + only_if_revision for guarded overwrite."
+    )]
     async fn create_document(
         &self,
-        Parameters(p): Parameters<PathContent>,
+        Parameters(p): Parameters<PathContentCreate>,
     ) -> Result<String, String> {
         self.call_rpc_json(
             "create_document",
-            json!({ "path": p.path, "content": p.content }),
+            json!({
+                "path": p.path,
+                "content": p.content,
+                "force": p.force,
+                "only_if_revision": p.only_if_revision,
+            }),
         )
         .await
     }

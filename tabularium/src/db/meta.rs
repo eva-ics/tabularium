@@ -122,6 +122,8 @@ pub struct ListedEntry {
     created_at: Timestamp,
     modified_at: Timestamp,
     accessed_at: Timestamp,
+    /// UUID v4 string for files; `None` for directories (always `NULL` in storage).
+    revision: Option<String>,
     size_bytes: Option<i64>,
     /// Recursive file count under this directory; `0` for files.
     recursive_file_count: u64,
@@ -137,6 +139,7 @@ impl ListedEntry {
         created_at: Timestamp,
         modified_at: Timestamp,
         accessed_at: Timestamp,
+        revision: Option<String>,
         size_bytes: Option<i64>,
         recursive_file_count: u64,
     ) -> Self {
@@ -148,6 +151,7 @@ impl ListedEntry {
             created_at,
             modified_at,
             accessed_at,
+            revision,
             size_bytes,
             recursive_file_count,
         }
@@ -181,6 +185,11 @@ impl ListedEntry {
         self.accessed_at
     }
 
+    /// Write-side concurrency token (UUID v4) for files; absent for directories.
+    pub fn revision(&self) -> Option<&str> {
+        self.revision.as_deref()
+    }
+
     pub fn size_bytes(&self) -> Option<i64> {
         self.size_bytes
     }
@@ -200,6 +209,8 @@ pub struct DocumentMeta {
     created_at: Timestamp,
     modified_at: Timestamp,
     accessed_at: Timestamp,
+    /// UUID v4 string; every file row carries one after migration.
+    revision: Option<String>,
     size_bytes: i64,
 }
 
@@ -213,6 +224,7 @@ impl DocumentMeta {
         created_at: Timestamp,
         modified_at: Timestamp,
         accessed_at: Timestamp,
+        revision: Option<String>,
         size_bytes: i64,
     ) -> Self {
         Self {
@@ -223,6 +235,7 @@ impl DocumentMeta {
             created_at,
             modified_at,
             accessed_at,
+            revision,
             size_bytes,
         }
     }
@@ -253,6 +266,10 @@ impl DocumentMeta {
 
     pub fn accessed_at(&self) -> Timestamp {
         self.accessed_at
+    }
+
+    pub fn revision(&self) -> Option<&str> {
+        self.revision.as_deref()
     }
 
     pub fn size_bytes(&self) -> i64 {

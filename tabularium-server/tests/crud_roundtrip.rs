@@ -775,7 +775,12 @@ async fn rpc_describe_get_set_clear_on_directory_and_file() {
         .unwrap();
     let v: Value = r.json().await.unwrap();
     assert!(v.get("error").is_none());
-    assert!(v["result"].is_null());
+    assert!(
+        v["result"]["revision"]
+            .as_str()
+            .is_some_and(|s| !s.is_empty()),
+        "{v:?}"
+    );
 
     let body = json!({
         "jsonrpc": "2.0",

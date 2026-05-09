@@ -121,6 +121,7 @@ fn stat_row_to_listed_row(s: &StatRow) -> ListedEntryRow {
         created_at: s.created_at(),
         modified_at: s.modified_at(),
         accessed_at: s.accessed_at(),
+        revision: s.revision().map(str::to_string),
         size_bytes: Some(s.size_bytes()),
         recursive_file_count: 0,
     }
@@ -2274,6 +2275,7 @@ mod ls_sort_tests {
             created_at: z,
             modified_at: Timestamp::from(Duration::from_secs(mod_secs)),
             accessed_at: z,
+            revision: None,
             size_bytes: None,
             recursive_file_count: 0,
         }

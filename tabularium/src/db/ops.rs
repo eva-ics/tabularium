@@ -305,18 +305,44 @@ impl<S: Storage> Database<S> {
     }
 
     /// Create a file at an absolute path (parent directories must exist).
-    #[instrument(skip(self, path, content), err(Debug))]
+    ///
+    /// `force` overwrites an existing file when `true`. With `only_if_revision`, the server asserts the
+    /// path names an existing file: missing target → [`Error::NotFound`]; mismatch → [`Error::RevisionMismatch`].
+    /// Existing target with `force=false` → [`Error::Duplicate`] (`only_if_revision` not consulted).
+    #[instrument(skip(self, path, content), fields(force, only_if = only_if_revision.is_some()), err(Debug))]
     pub async fn create_document_at_path(
         &self,
         path: impl AsRef<str> + Send,
         content: impl AsRef<str> + Send,
+        force: bool,
+        only_if_revision: Option<&str>,
     ) -> Result<EntryId> {
         let path = path.as_ref();
         canonical_path_segments(path)?;
         let (parent, name) = parent_and_final_name(path)?;
         validate_entity_name(&name)?;
-        self.create_file_in_directory(parent, name, content.as_ref())
-            .await
+        match self.resolve_file_path(path).await {
+            Ok(id) => {
+                if !force {
+                    return Err(Error::Duplicate("name already exists in directory".into()));
+                }
+                if let Some(exp) = only_if_revision {
+                    self.update_document_if_revision(id, content.as_ref(), exp)
+                        .await?;
+                } else {
+                    self.update_document(id, content.as_ref()).await?;
+                }
+                Ok(id)
+            }
+            Err(Error::NotFound(_)) => {
+                if only_if_revision.is_some() {
+                    return Err(Error::NotFound(path.to_string()));
+                }
+                self.create_file_in_directory(parent, name, content.as_ref())
+                    .await
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Create parent directories as needed, then create or replace file body.
@@ -326,12 +352,13 @@ impl<S: Storage> Database<S> {
     ///   The check-then-create is **atomic** at the storage layer (SQLite `UNIQUE(parent_id, name)`),
     ///   so concurrent callers cannot both observe "missing" and both create.
     /// - `true`: replace existing body (legacy upsert behaviour) or create when missing.
-    #[instrument(skip(self, path, content), fields(force), err(Debug))]
+    #[instrument(skip(self, path, content), fields(force, only_if = only_if_revision.is_some()), err(Debug))]
     pub async fn put_document_by_path(
         &self,
         path: impl AsRef<str> + Send,
         content: impl AsRef<str> + Send,
         force: bool,
+        only_if_revision: Option<&str>,
     ) -> Result<()> {
         let path = path.as_ref();
         canonical_path_segments(path)?;
@@ -339,6 +366,11 @@ impl<S: Storage> Database<S> {
         validate_entity_name(&name)?;
         self.storage.ensure_directory_path(&parent).await?;
         let content = content.as_ref();
+        if let Some(exp) = only_if_revision {
+            let id = self.resolve_file_path(path).await?;
+            self.update_document_if_revision(id, content, exp).await?;
+            return Ok(());
+        }
         if !force {
             self.create_file_in_directory(parent, name, content).await?;
             return Ok(());
@@ -406,7 +438,8 @@ impl<S: Storage> Database<S> {
                 ));
             }
             let body = self.get_document(fid).await?;
-            self.put_document_by_path(&dst_file, &body, true).await?;
+            self.put_document_by_path(&dst_file, &body, true, None)
+                .await?;
             return Ok(());
         }
 
@@ -458,7 +491,8 @@ impl<S: Storage> Database<S> {
                         .resolve_path(&src_child, Some(EntryKind::File))
                         .await?;
                     let body = self.get_document(fid).await?;
-                    self.put_document_by_path(&dst_child, &body, true).await?;
+                    self.put_document_by_path(&dst_child, &body, true, None)
+                        .await?;
                 }
             }
         }
