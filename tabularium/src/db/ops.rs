@@ -251,6 +251,7 @@ impl<S: Storage> Database<S> {
         fields(
             keywords_len = keywords.as_ref().len(),
             directory = ?directory_prefix,
+            restrict_document = ?restrict_to_document.map(|id| id.raw()),
             limit,
         ),
         err(Debug)
@@ -260,6 +261,7 @@ impl<S: Storage> Database<S> {
         keywords: impl AsRef<str>,
         directory_prefix: Option<&str>,
         limit: usize,
+        restrict_to_document: Option<EntryId>,
     ) -> Result<Vec<SearchHit>> {
         let norm = directory_prefix.and_then(|p| {
             let t = p.trim();
@@ -269,7 +271,10 @@ impl<S: Storage> Database<S> {
                 Some(t.trim_end_matches('/'))
             }
         });
-        let scored = self.search.search_scored(keywords.as_ref(), norm).await?;
+        let scored = self
+            .search
+            .search_scored(keywords.as_ref(), norm, restrict_to_document)
+            .await?;
         let take = scored.len().min(limit);
         let scored: Vec<_> = scored.into_iter().take(take).collect();
         let ids: Vec<EntryId> = scored.iter().map(|(id, _)| *id).collect();

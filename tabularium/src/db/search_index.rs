@@ -235,7 +235,7 @@ impl SearchIndex {
         directory_prefix: Option<&str>,
     ) -> Result<Vec<EntryId>> {
         Ok(self
-            .search_scored_inner(keywords, directory_prefix)
+            .search_scored_inner(keywords, directory_prefix, None)
             .await?
             .into_iter()
             .map(|(id, _)| id)
@@ -252,14 +252,17 @@ impl SearchIndex {
         &self,
         keywords: impl AsRef<str>,
         directory_prefix: Option<&str>,
+        restrict_doc_id: Option<EntryId>,
     ) -> Result<Vec<(EntryId, f32)>> {
-        self.search_scored_inner(keywords, directory_prefix).await
+        self.search_scored_inner(keywords, directory_prefix, restrict_doc_id)
+            .await
     }
 
     async fn search_scored_inner(
         &self,
         keywords: impl AsRef<str>,
         directory_prefix: Option<&str>,
+        restrict_doc_id: Option<EntryId>,
     ) -> Result<Vec<(EntryId, f32)>> {
         let reader = self.reader.lock().await;
         let searcher = reader.searcher();
@@ -270,7 +273,7 @@ impl SearchIndex {
         let text_q = parser
             .parse_query(keywords.as_ref())
             .map_err(|e| Error::Search(e.to_string()))?;
-        let q: Box<dyn Query> = match directory_prefix {
+        let mut q: Box<dyn Query> = match directory_prefix {
             None | Some("") => text_q,
             Some(prefix) => {
                 let norm = prefix.trim().trim_end_matches('/').to_string();
@@ -285,6 +288,19 @@ impl SearchIndex {
                 }
             }
         };
+        if let Some(doc_id) = restrict_doc_id {
+            let uid = u64::try_from(doc_id.raw()).map_err(|_| {
+                Error::Search("document id must be non-negative for index query".into())
+            })?;
+            let doc_q: Box<dyn Query> = Box::new(TermQuery::new(
+                Term::from_field_u64(self.f_doc_id, uid),
+                IndexRecordOption::Basic,
+            ));
+            q = Box::new(BooleanQuery::new(vec![
+                (Occur::Must, q),
+                (Occur::Must, doc_q),
+            ]));
+        }
         let top = searcher
             .search(&q, &TopDocs::with_limit(SEARCH_LIMIT))
             .map_err(|e| Error::Search(e.to_string()))?;

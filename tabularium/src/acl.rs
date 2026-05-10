@@ -140,6 +140,11 @@ impl AuthContext {
 
     /// Parent [`list_directory`] rows: files require [`check_read_abs`]. Directories also pass when some
     /// **allow** read rule reaches this directory or strictly beneath it (e.g. `/vault/*` exposes `/vault`).
+    ///
+    /// **Deny vs traversal:** when [`check_read_abs`] fails on a directory (including an explicit deny on
+    /// that path), visibility still falls through to allow-reachability over **allow** rules only — a deny on
+    /// `/vault` does **not** by itself hide `/vault` if some allow rule reaches a descendant file path.
+    /// Per-document/file denies still apply via [`check_read_abs`] on files and via hit filtering on search.
     pub fn check_read_abs_for_listing(
         &self,
         abs_path: &str,
@@ -481,6 +486,16 @@ mod tests {
     fn subtree_allow_blocks_sibling_branch() {
         let c = ctx(false, &["/test/*"], &[]);
         assert!(c.check_read_abs("/other/file.txt").is_err());
+    }
+
+    #[test]
+    fn directory_listing_may_remain_visible_under_deny_when_allow_reaches_descendant_file() {
+        let c = ctx(false, &["/vault/deep/a.md"], &["/vault"]);
+        assert!(c.check_read_abs("/vault").is_err());
+        assert!(
+            c.check_read_abs_for_listing("/vault", crate::EntryKind::Dir)
+                .unwrap()
+        );
     }
 
     #[test]

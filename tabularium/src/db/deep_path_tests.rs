@@ -171,7 +171,7 @@ async fn move_file_between_directories_updates_search() {
         .await
         .unwrap();
     let h1 = db
-        .search_hits("moveneedle_unique", Some("/src_dir"), 10)
+        .search_hits("moveneedle_unique", Some("/src_dir"), 10, None)
         .await
         .unwrap();
     assert_eq!(h1.len(), 1);
@@ -179,13 +179,13 @@ async fn move_file_between_directories_updates_search() {
         .await
         .unwrap();
     assert!(
-        db.search_hits("moveneedle_unique", Some("/src_dir"), 10)
+        db.search_hits("moveneedle_unique", Some("/src_dir"), 10, None)
             .await
             .unwrap()
             .is_empty()
     );
     let h2 = db
-        .search_hits("moveneedle_unique", Some("/dst_dir"), 10)
+        .search_hits("moveneedle_unique", Some("/dst_dir"), 10, None)
         .await
         .unwrap();
     assert_eq!(h2.len(), 1);
@@ -233,7 +233,7 @@ async fn recursive_delete_clears_storage_and_search() {
         .await
         .unwrap();
     assert_eq!(
-        db.search_hits("deepf1needle", None, 10)
+        db.search_hits("deepf1needle", None, 10, None)
             .await
             .unwrap()
             .len(),
@@ -241,7 +241,7 @@ async fn recursive_delete_clears_storage_and_search() {
     );
     db.delete_directory_recursive("/deep").await.unwrap();
     assert!(
-        db.search_hits("deepf1needle", None, 10)
+        db.search_hits("deepf1needle", None, 10, None)
             .await
             .unwrap()
             .is_empty()
@@ -282,23 +282,23 @@ async fn search_subtree_scoped_and_segment_boundary() {
         .await
         .unwrap();
     let a_only = db
-        .search_hits("unique_deep_a", Some("/ns/a"), 10)
+        .search_hits("unique_deep_a", Some("/ns/a"), 10, None)
         .await
         .unwrap();
     assert_eq!(a_only.len(), 1);
     assert_eq!(a_only[0].path(), "/ns/a/doc1");
     let ns_b = db
-        .search_hits("unique_deep_b", Some("/ns"), 10)
+        .search_hits("unique_deep_b", Some("/ns"), 10, None)
         .await
         .unwrap();
     assert_eq!(ns_b.len(), 1);
     assert!(
-        db.search_hits("unique_deep_a", Some("/ns/b"), 10)
+        db.search_hits("unique_deep_a", Some("/ns/b"), 10, None)
             .await
             .unwrap()
             .is_empty()
     );
-    let both = db.search_hits("unique_deep", None, 10).await.unwrap();
+    let both = db.search_hits("unique_deep", None, 10, None).await.unwrap();
     assert_eq!(both.len(), 2);
     db.create_directory("/segtrap", None, false).await.unwrap();
     db.create_directory("/segtrap/a", None, false)
@@ -317,7 +317,7 @@ async fn search_subtree_scoped_and_segment_boundary() {
         .await
         .unwrap();
     let scoped = db
-        .search_hits("trapxyz123seg", Some("/segtrap/a/b"), 10)
+        .search_hits("trapxyz123seg", Some("/segtrap/a/b"), 10, None)
         .await
         .unwrap();
     assert_eq!(scoped.len(), 1);

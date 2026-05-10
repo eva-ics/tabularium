@@ -134,6 +134,25 @@ pub(crate) fn check_read(auth: &RequestAuth, abs_path: &str) -> tabularium::Resu
     }
 }
 
+/// Directory subtree search (`path` / `dir` limiter): allow when listing would show this directory
+/// as a traversal root — same reachability doctrine as [`filter_listed_children`].
+pub(crate) fn check_search_directory_traverse(
+    auth: &RequestAuth,
+    abs_dir: &str,
+) -> tabularium::Result<()> {
+    match auth {
+        RequestAuth::Disabled => Ok(()),
+        RequestAuth::Authenticated(ctx) if ctx.admin() => Ok(()),
+        RequestAuth::Authenticated(ctx) => {
+            if ctx.check_read_abs_for_listing(abs_dir, tabularium::EntryKind::Dir)? {
+                Ok(())
+            } else {
+                Err(tabularium::Error::Forbidden("read denied".into()))
+            }
+        }
+    }
+}
+
 pub(crate) fn check_write(auth: &RequestAuth, abs_path: &str) -> tabularium::Result<()> {
     match auth {
         RequestAuth::Disabled => Ok(()),

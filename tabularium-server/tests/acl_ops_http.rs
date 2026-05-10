@@ -241,6 +241,82 @@ async fn acl_ops_deny_override_blocks_denied_file_only() {
 }
 
 #[tokio::test]
+async fn acl_ops_deny_override_search_scoped_tree_excludes_denied_file_rpc() {
+    let f = spawn_acl_ops_fixture().await;
+    let c = reqwest::Client::new();
+
+    let v = rpc_json(
+        &c,
+        &f.base,
+        &f.key_denyov,
+        "search",
+        json!({ "query": "classified", "path": "/test" }),
+    )
+    .await;
+    assert_rpc_ok(&v, "denyov rpc search classified scoped");
+    assert!(
+        v["result"].as_array().unwrap().is_empty(),
+        "denied body must not surface as a hit: {v:?}"
+    );
+
+    let v = rpc_json(
+        &c,
+        &f.base,
+        &f.key_denyov,
+        "search",
+        json!({ "query": "hello", "path": "/test" }),
+    )
+    .await;
+    assert_rpc_ok(&v, "denyov rpc search hello scoped");
+    let paths: Vec<&str> = v["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|h| h["path"].as_str())
+        .collect();
+    assert!(paths.contains(&"/test/file.txt"));
+    assert!(!paths.iter().any(|p| *p == "/test/secret.txt"));
+}
+
+#[tokio::test]
+async fn acl_ops_deny_override_search_scoped_tree_excludes_denied_file_rest() {
+    let f = spawn_acl_ops_fixture().await;
+    let c = reqwest::Client::new();
+
+    let r = c
+        .get(format!("{}/api/search", f.base))
+        .header("X-Auth-Key", &f.key_denyov)
+        .query(&[("q", "classified"), ("dir", "/test")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), reqwest::StatusCode::OK);
+    let body: Value = r.json().await.unwrap();
+    assert!(
+        body.as_array().unwrap().is_empty(),
+        "REST scoped search must omit denied doc: {body:?}"
+    );
+
+    let r = c
+        .get(format!("{}/api/search", f.base))
+        .header("X-Auth-Key", &f.key_denyov)
+        .query(&[("q", "hello"), ("dir", "/test")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), reqwest::StatusCode::OK);
+    let body: Value = r.json().await.unwrap();
+    let paths: Vec<&str> = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|h| h["path"].as_str())
+        .collect();
+    assert!(paths.contains(&"/test/file.txt"));
+    assert!(!paths.iter().any(|p| *p == "/test/secret.txt"));
+}
+
+#[tokio::test]
 async fn acl_ops_rest_list_root_filtered_for_subtree_psk() {
     let f = spawn_acl_ops_fixture().await;
     let c = reqwest::Client::new();
@@ -389,4 +465,100 @@ async fn acl_ops_search_subtree_filters_hits() {
     .await;
     assert_rpc_ok(&v, "search nomatch");
     assert!(v["result"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn acl_ops_exact_psk_search_allows_ancestor_path_scope_rpc() {
+    let f = spawn_acl_ops_fixture().await;
+    let c = reqwest::Client::new();
+    let v = rpc_json(
+        &c,
+        &f.base,
+        &f.key_exact,
+        "search",
+        json!({ "query": "hello", "path": "/test" }),
+    )
+    .await;
+    assert_rpc_ok(&v, "search exact ancestor");
+    let paths: Vec<&str> = v["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|h| h["path"].as_str())
+        .collect();
+    assert_eq!(paths, vec!["/test/file.txt"]);
+}
+
+#[tokio::test]
+async fn acl_ops_exact_psk_search_nested_scope_is_forbidden_rpc() {
+    let f = spawn_acl_ops_fixture().await;
+    let c = reqwest::Client::new();
+    let v = rpc_json(
+        &c,
+        &f.base,
+        &f.key_exact,
+        "search",
+        json!({ "query": "nested", "path": "/test/nested" }),
+    )
+    .await;
+    assert_rpc_forbidden(&v, "search exact nested dir no traverse");
+}
+
+#[tokio::test]
+async fn acl_ops_exact_psk_search_exact_file_path_rpc() {
+    let f = spawn_acl_ops_fixture().await;
+    let c = reqwest::Client::new();
+    let v = rpc_json(
+        &c,
+        &f.base,
+        &f.key_exact,
+        "search",
+        json!({ "query": "hello", "path": "/test/file.txt" }),
+    )
+    .await;
+    assert_rpc_ok(&v, "search exact file path");
+    let paths: Vec<&str> = v["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|h| h["path"].as_str())
+        .collect();
+    assert_eq!(paths, vec!["/test/file.txt"]);
+}
+
+#[tokio::test]
+async fn acl_ops_exact_psk_search_traverse_matches_rest_get() {
+    let f = spawn_acl_ops_fixture().await;
+    let c = reqwest::Client::new();
+    let r = c
+        .get(format!("{}/api/search", f.base))
+        .header("X-Auth-Key", &f.key_exact)
+        .query(&[("q", "hello"), ("dir", "/test")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), reqwest::StatusCode::OK);
+    let body: Value = r.json().await.unwrap();
+    let paths: Vec<&str> = body
+        .as_array()
+        .expect("search array")
+        .iter()
+        .filter_map(|h| h["path"].as_str())
+        .collect();
+    assert_eq!(paths, vec!["/test/file.txt"]);
+}
+
+#[tokio::test]
+async fn acl_ops_nomatch_psk_search_foreign_directory_forbidden() {
+    let f = spawn_acl_ops_fixture().await;
+    let c = reqwest::Client::new();
+    let v = rpc_json(
+        &c,
+        &f.base,
+        &f.key_nomatch,
+        "search",
+        json!({ "query": "hello", "path": "/test" }),
+    )
+    .await;
+    assert_rpc_forbidden(&v, "search nomatch foreign dir");
 }

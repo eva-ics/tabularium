@@ -14,8 +14,9 @@ use serde_json::{Map, Value, json};
 use tracing::info;
 
 use crate::auth::{
-    RequestAuth, check_read, check_write, directory_listing_requires_parent_readable,
-    filter_listed_children, require_mgmt_admin, resolve_request_auth_arc, whoami_json,
+    RequestAuth, check_read, check_search_directory_traverse, check_write,
+    directory_listing_requires_parent_readable, filter_listed_children, require_mgmt_admin,
+    resolve_request_auth_arc, whoami_json,
 };
 use crate::jwt_assertion::AssertionRuntime;
 use crate::test_payload::test_payload;
@@ -25,9 +26,51 @@ use tabularium::resource_path::{
     canonical_path_segments, join_under_directory, normalize_path_for_rpc,
 };
 use tabularium::validate_entity_name;
-use tabularium::{DocumentWaitStatus, EntryKind, Error, SqliteDatabase, TailMode};
+use tabularium::{DocumentWaitStatus, EntryId, EntryKind, Error, SqliteDatabase, TailMode};
 
 const SEARCH_LIMIT: usize = 256;
+
+enum SearchScopeReady {
+    Global,
+    Directory(String),
+    File { path: String, id: EntryId },
+}
+
+impl SearchScopeReady {
+    fn authorize(&self, auth: &RequestAuth) -> tabularium::Result<()> {
+        match self {
+            Self::Global => Ok(()),
+            Self::Directory(p) => check_search_directory_traverse(auth, p),
+            Self::File { path, .. } => check_read(auth, path),
+        }
+    }
+
+    fn directory_prefix_and_restrict(&self) -> (Option<&str>, Option<EntryId>) {
+        match self {
+            Self::Global => (None, None),
+            Self::Directory(p) => (Some(p.as_str()), None),
+            Self::File { id, .. } => (None, Some(*id)),
+        }
+    }
+}
+
+async fn resolve_search_scope_normalized(
+    db: &SqliteDatabase,
+    normalized: String,
+) -> tabularium::Result<SearchScopeReady> {
+    let trimmed = normalized.trim_end_matches('/').to_string();
+    if trimmed.is_empty() {
+        return Ok(SearchScopeReady::Global);
+    }
+    match db.resolve_file_path(&trimmed).await {
+        Ok(id) => Ok(SearchScopeReady::File { path: trimmed, id }),
+        Err(Error::NotFound(_)) => {
+            db.resolve_directory_path(&trimmed).await?;
+            Ok(SearchScopeReady::Directory(trimmed))
+        }
+        Err(e) => Err(e),
+    }
+}
 
 /// Random pre-shared key: `A–Z`, `a–z`, `0–9` (`44` chars, ~260 bits).
 fn generate_access_psk() -> String {
@@ -563,11 +606,18 @@ async fn search_inner(
     q: &str,
     dir_prefix: Option<&str>,
 ) -> ApiResult<Json<Value>> {
-    if let Some(d) = dir_prefix {
+    let scope = if let Some(d) = dir_prefix {
         let n = normalize_path_for_rpc(d).map_err(ApiError)?;
-        check_read(auth, &n).map_err(ApiError)?;
-    }
-    let hits = st.db.search_hits(q, dir_prefix, SEARCH_LIMIT).await?;
+        canonical_path_segments(&n).map_err(ApiError)?;
+        resolve_search_scope_normalized(&st.db, n)
+            .await
+            .map_err(ApiError)?
+    } else {
+        SearchScopeReady::Global
+    };
+    scope.authorize(auth).map_err(ApiError)?;
+    let (dp, restrict_doc) = scope.directory_prefix_and_restrict();
+    let hits = st.db.search_hits(q, dp, SEARCH_LIMIT, restrict_doc).await?;
     let hits = filter_search_hits(auth, hits);
     let v: Vec<Value> = hits
         .into_iter()
@@ -1164,13 +1214,15 @@ pub(crate) async fn dispatch_app_rpc(
         "search" => {
             let q = get_str(&m, "query")?;
             let prefix = directory_search_prefix(&m)?;
-            if let Some(ref d) = prefix {
-                check_read(auth, d).map_err(RpcAppError::Other)?;
-            }
-            let hits = st
-                .db
-                .search_hits(q, prefix.as_deref(), SEARCH_LIMIT)
-                .await?;
+            let scope = match prefix {
+                None => SearchScopeReady::Global,
+                Some(p) => resolve_search_scope_normalized(&st.db, p)
+                    .await
+                    .map_err(RpcAppError::Other)?,
+            };
+            scope.authorize(auth).map_err(RpcAppError::Other)?;
+            let (dp, restrict_doc) = scope.directory_prefix_and_restrict();
+            let hits = st.db.search_hits(q, dp, SEARCH_LIMIT, restrict_doc).await?;
             let hits = filter_search_hits(auth, hits);
             let v: Vec<Value> = hits
                 .into_iter()

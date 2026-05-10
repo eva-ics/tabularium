@@ -658,6 +658,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn search_hits_restrict_to_document_filters_by_entry_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("restrict.db");
+        let idx_path = dir.path().join("restrict.idx");
+        let uri = format!("sqlite://{}", db_path.display());
+        let db = SqliteDatabase::init(&uri, &idx_path, 8).await.unwrap();
+        db.create_directory("/x", None, false).await.unwrap();
+        let id_a = db
+            .create_file_in_directory("/x", "a", "needle_shared_alpha")
+            .await
+            .unwrap();
+        db.create_file_in_directory("/x", "b", "needle_shared_beta")
+            .await
+            .unwrap();
+        db.reindex(None).await.unwrap();
+        let hits_all = db
+            .search_hits("needle_shared", None, 10, None)
+            .await
+            .unwrap();
+        assert_eq!(hits_all.len(), 2);
+        let hits_a = db
+            .search_hits("needle_shared", None, 10, Some(id_a))
+            .await
+            .unwrap();
+        assert_eq!(hits_a.len(), 1);
+        assert_eq!(hits_a[0].path(), "/x/a");
+    }
+
+    #[tokio::test]
     async fn search_indexes_file_name_and_description_reindexes_on_describe() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("sd.db");
