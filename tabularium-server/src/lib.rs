@@ -1,5 +1,6 @@
 //! Library surface for tests and future embedding.
 
+pub(crate) mod auth;
 pub mod config;
 mod embedded_ui;
 #[cfg(feature = "mcp")]

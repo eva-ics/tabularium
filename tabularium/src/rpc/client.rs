@@ -11,7 +11,7 @@ use crate::resource_path::normalize_path_for_rpc;
 use crate::text_lines::TailMode;
 use crate::{EntryId, Error, Result, Timestamp};
 
-use crate::jsonrpc_codes::{DUPLICATE_RESOURCE, REVISION_MISMATCH};
+use crate::jsonrpc_codes::{DUPLICATE_RESOURCE, FORBIDDEN, REVISION_MISMATCH, UNAUTHORIZED};
 
 /// Successful [`Client::create_document`] payload (`id` + UUID `revision` string).
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
@@ -124,6 +124,10 @@ impl Client {
                 Error::Duplicate(detail.to_string())
             } else if code == REVISION_MISMATCH {
                 Error::RevisionMismatch(msg)
+            } else if code == UNAUTHORIZED {
+                Error::Unauthorized(msg)
+            } else if code == FORBIDDEN {
+                Error::Forbidden(msg)
             } else {
                 Error::InvalidInput(msg)
             });
@@ -137,6 +141,42 @@ impl Client {
     pub async fn test(&self) -> Result<ServerTest> {
         let r = self.call("test", json!({})).await?;
         serde_json::from_value(r).map_err(|e| Error::InvalidInput(e.to_string()))
+    }
+
+    /// `whoami` RPC — current ACL identity (requires auth when `[server].authenticate = true`).
+    pub async fn whoami(&self) -> Result<Value> {
+        self.call("whoami", json!({})).await
+    }
+
+    /// Operator ACL management RPCs (`acl_*`, `psk_*`).
+    pub async fn acl_list(&self) -> Result<Value> {
+        self.call("acl_list", json!({})).await
+    }
+
+    pub async fn acl_get(&self, name: &str) -> Result<Value> {
+        self.call("acl_get", json!({ "name": name })).await
+    }
+
+    pub async fn acl_put(&self, name: &str, body: &str) -> Result<Value> {
+        self.call("acl_put", json!({ "name": name, "body": body }))
+            .await
+    }
+
+    pub async fn acl_destroy(&self, name: &str) -> Result<Value> {
+        self.call("acl_destroy", json!({ "name": name })).await
+    }
+
+    pub async fn psk_list(&self) -> Result<Value> {
+        self.call("psk_list", json!({})).await
+    }
+
+    pub async fn psk_create(&self, name: &str, acl_name: &str) -> Result<Value> {
+        self.call("psk_create", json!({ "name": name, "acl_name": acl_name }))
+            .await
+    }
+
+    pub async fn psk_destroy(&self, name: &str) -> Result<Value> {
+        self.call("psk_destroy", json!({ "name": name })).await
     }
 
     /// `list_directory` RPC (`path` is absolute, e.g. `/` for root).
@@ -654,6 +694,8 @@ pub struct ServerTest {
     product_name: String,
     product_version: String,
     uptime: u64,
+    #[serde(default)]
+    authenticate_api: bool,
 }
 
 impl ServerTest {
@@ -668,6 +710,11 @@ impl ServerTest {
     /// Process uptime in nanoseconds since server `run()` began (`u64`; saturates at `u64::MAX`).
     pub fn uptime(&self) -> u64 {
         self.uptime
+    }
+
+    /// When true, REST and JSON-RPC expect `X-Auth-Key` (stage-1 ACL).
+    pub fn authenticate_api(&self) -> bool {
+        self.authenticate_api
     }
 }
 

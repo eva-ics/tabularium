@@ -40,10 +40,56 @@ pub(crate) struct ShellSpawnContext {
 /// Clap subcommand names for `tb` (kebab-case), plus shell meta-commands (no `shell` inside shell).
 /// Keep sorted alphabetically per the project coding-rules scroll.
 const SUBCOMMANDS: &[&str] = &[
-    "?", "append", "cat", "cd", "chat", "clear", "cp", "desc", "ec", "edit", "exit", "export",
-    "find", "grep", "h", "head", "help", "import", "l", "less", "ll", "ls", "lt", "mkdir", "mcd",
-    "mv", "put", "q", "quit", "reindex", "rm", "search", "slice", "stat", "tail", "test",
-    "timeout", "touch", "wait", "wc",
+    "?",
+    "acl-deploy",
+    "acl-destroy",
+    "acl-edit",
+    "acl-get",
+    "acl-list",
+    "append",
+    "cat",
+    "cd",
+    "chat",
+    "clear",
+    "cp",
+    "desc",
+    "ec",
+    "edit",
+    "exit",
+    "export",
+    "find",
+    "grep",
+    "h",
+    "head",
+    "help",
+    "import",
+    "l",
+    "less",
+    "ll",
+    "ls",
+    "lt",
+    "mcd",
+    "mkdir",
+    "mv",
+    "psk-create",
+    "psk-destroy",
+    "psk-get",
+    "psk-list",
+    "put",
+    "q",
+    "quit",
+    "reindex",
+    "rm",
+    "search",
+    "slice",
+    "stat",
+    "tail",
+    "test",
+    "timeout",
+    "touch",
+    "wait",
+    "wc",
+    "whoami",
 ];
 
 /// Keep sorted alphabetically per the project coding-rules scroll.
@@ -61,10 +107,60 @@ mod cp_completion_tests {
         assert!(SUBCOMMANDS.contains(&"cp"));
         assert!(PATH_FIRST.contains(&"cp"));
     }
+
+    #[test]
+    fn subcommands_include_acl_psk_whoami() {
+        for s in [
+            "acl-deploy",
+            "acl-destroy",
+            "acl-edit",
+            "acl-get",
+            "acl-list",
+            "psk-create",
+            "psk-destroy",
+            "psk-get",
+            "psk-list",
+            "whoami",
+        ] {
+            assert!(SUBCOMMANDS.contains(&s), "{s}");
+        }
+    }
+
+    #[test]
+    fn flags_for_put_append_includes_force_and_file() {
+        assert!(super::flags_for("put").contains(&"--force"));
+        assert!(super::flags_for("append").contains(&"--file"));
+    }
+
+    /// Ferrum / coding-rules: lists claim alphabetical order — enforce so the scroll cannot lie.
+    #[test]
+    fn subcommands_are_ascii_sorted() {
+        for w in SUBCOMMANDS.windows(2) {
+            assert!(
+                w[0] < w[1],
+                "SUBCOMMANDS must be ASCII-sorted: `{}` before `{}`",
+                w[0],
+                w[1]
+            );
+        }
+    }
+
+    #[test]
+    fn path_first_are_ascii_sorted() {
+        for w in PATH_FIRST.windows(2) {
+            assert!(
+                w[0] < w[1],
+                "PATH_FIRST must be ASCII-sorted: `{}` before `{}`",
+                w[0],
+                w[1]
+            );
+        }
+    }
 }
 
 fn flags_for(sub: &str) -> &'static [&'static str] {
     match sub {
+        "append" | "put" => &["--file", "--force", "-f"],
         "cat" | "slice" => &["--raw"],
         "chat" => &["-i", "--id", "--raw"],
         "cp" | "rm" => &["-r", "--recursive"],
@@ -92,6 +188,10 @@ struct CompletionState {
     /// `list_directory` results keyed by absolute path (`"/"`, `"/notes"`, …).
     dir_list_cache: HashMap<String, Vec<(String, bool)>>,
     dirty: bool,
+    /// Cached `acl_list` names for `acl-edit` / second arg of `psk-create` (`None` = refresh).
+    acl_names_cache: Option<Vec<String>>,
+    /// Cached `psk_list` handles for `psk-destroy` (`None` = refresh).
+    psk_names_cache: Option<Vec<String>>,
     /// Interactive shell only: current directory path without leading `/` (`None` = root).
     cwd: Option<String>,
 }
@@ -102,6 +202,8 @@ impl Default for CompletionState {
             root_dir_names: Vec::new(),
             dir_list_cache: HashMap::new(),
             dirty: true,
+            acl_names_cache: None,
+            psk_names_cache: None,
             cwd: None,
         }
     }
@@ -128,6 +230,8 @@ impl CompletionState {
                 })
                 .collect(),
             dirty: false,
+            acl_names_cache: None,
+            psk_names_cache: None,
             cwd,
         }
     }
@@ -136,6 +240,56 @@ impl CompletionState {
         self.root_dir_names.clear();
         self.dir_list_cache.clear();
         self.dirty = true;
+        self.acl_names_cache = None;
+        self.psk_names_cache = None;
+    }
+
+    fn ensure_acl_names(&mut self, client: &Client, handle: &Handle) -> &[String] {
+        if self.acl_names_cache.is_none() {
+            let names = match handle.block_on(client.acl_list()) {
+                Ok(v) => v
+                    .as_array()
+                    .map(|arr| {
+                        let mut n: Vec<String> = arr
+                            .iter()
+                            .filter_map(|row| {
+                                row.get("name").and_then(|x| x.as_str()).map(str::to_string)
+                            })
+                            .collect();
+                        n.sort();
+                        n.dedup();
+                        n
+                    })
+                    .unwrap_or_default(),
+                Err(_) => Vec::new(),
+            };
+            self.acl_names_cache = Some(names);
+        }
+        self.acl_names_cache.as_deref().unwrap_or(&[])
+    }
+
+    fn ensure_psk_names(&mut self, client: &Client, handle: &Handle) -> &[String] {
+        if self.psk_names_cache.is_none() {
+            let names = match handle.block_on(client.psk_list()) {
+                Ok(v) => v
+                    .as_array()
+                    .map(|arr| {
+                        let mut n: Vec<String> = arr
+                            .iter()
+                            .filter_map(|row| {
+                                row.get("name").and_then(|x| x.as_str()).map(str::to_string)
+                            })
+                            .collect();
+                        n.sort();
+                        n.dedup();
+                        n
+                    })
+                    .unwrap_or_default(),
+                Err(_) => Vec::new(),
+            };
+            self.psk_names_cache = Some(names);
+        }
+        self.psk_names_cache.as_deref().unwrap_or(&[])
     }
 
     fn ensure_root_directories(&mut self, client: &Client, handle: &Handle) {
@@ -355,6 +509,38 @@ impl TbHelper {
                     display: c.clone(),
                     replacement: rep,
                 }
+            })
+            .collect()
+    }
+
+    fn complete_acl_names(&self, state: &mut CompletionState, partial: &str) -> Vec<Pair> {
+        let c = self
+            .client
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let names = state.ensure_acl_names(&c, &self.handle);
+        names
+            .iter()
+            .filter(|n| partial.is_empty() || n.starts_with(partial))
+            .map(|n| Pair {
+                display: n.clone(),
+                replacement: format!("{n} "),
+            })
+            .collect()
+    }
+
+    fn complete_psk_names(&self, state: &mut CompletionState, partial: &str) -> Vec<Pair> {
+        let c = self
+            .client
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let names = state.ensure_psk_names(&c, &self.handle);
+        names
+            .iter()
+            .filter(|n| partial.is_empty() || n.starts_with(partial))
+            .map(|n| Pair {
+                display: n.clone(),
+                replacement: format!("{n} "),
             })
             .collect()
     }
@@ -781,6 +967,11 @@ impl Completer for TbHelper {
                 return Ok((pos, p));
             }
             if PATH_FIRST.contains(&sub) {
+                if sub == "put" || sub == "append" {
+                    let mut p = TbHelper::complete_flags(sub, "");
+                    p.extend(self.complete_path(&mut state, ""));
+                    return Ok((pos, p));
+                }
                 let p = self.complete_path(&mut state, "");
                 return Ok((pos, p));
             }
@@ -794,6 +985,21 @@ impl Completer for TbHelper {
                     replacement: "/ ".into(),
                 }];
                 p.extend(self.complete_path(&mut state, ""));
+                return Ok((pos, p));
+            }
+            if matches!(sub, "acl-edit" | "acl-destroy" | "acl-get")
+                && words.len() == 1
+                && ends_with_space
+            {
+                let p = self.complete_acl_names(&mut state, "");
+                return Ok((pos, p));
+            }
+            if sub == "psk-create" && words.len() == 2 && ends_with_space {
+                let p = self.complete_acl_names(&mut state, "");
+                return Ok((pos, p));
+            }
+            if sub == "psk-destroy" && words.len() == 1 && ends_with_space {
+                let p = self.complete_psk_names(&mut state, "");
                 return Ok((pos, p));
             }
             let fl = TbHelper::complete_flags(sub, "");
@@ -863,6 +1069,15 @@ impl Completer for TbHelper {
                 pairs.extend(self.complete_path(&mut state, w));
                 return Ok((start, pairs));
             }
+            if words.len() == 2 && ends_with_space {
+                return Ok((pos, complete_import_fs_entries("")));
+            }
+            if words.len() == 3 && !ends_with_space {
+                return Ok((start, complete_import_fs_entries(words[2])));
+            }
+        }
+
+        if sub == "acl-deploy" {
             if words.len() == 2 && ends_with_space {
                 return Ok((pos, complete_import_fs_entries("")));
             }
@@ -989,6 +1204,42 @@ impl Completer for TbHelper {
             return Ok((start, p));
         }
 
+        if matches!(sub, "acl-edit" | "acl-destroy" | "acl-get")
+            && words.len() == 2
+            && !ends_with_space
+        {
+            let w = words[1];
+            if !w.starts_with('-') {
+                let p = self.complete_acl_names(&mut state, w);
+                return Ok((start, p));
+            }
+        }
+
+        if sub == "psk-create" && words.len() == 3 && !ends_with_space {
+            let w = words[2];
+            if !w.starts_with('-') {
+                let p = self.complete_acl_names(&mut state, w);
+                return Ok((start, p));
+            }
+        }
+
+        if sub == "psk-destroy" && words.len() == 2 && !ends_with_space {
+            let w = words[1];
+            if !w.starts_with('-') {
+                let p = self.complete_psk_names(&mut state, w);
+                return Ok((start, p));
+            }
+        }
+
+        // `put` / `append`: complete path after `-f` / `--force` / `--file`.
+        if matches!(sub, "put" | "append")
+            && ends_with_space
+            && matches!(words.last().copied(), Some("-f" | "--force" | "--file"))
+        {
+            let p = self.complete_path(&mut state, "");
+            return Ok((pos, p));
+        }
+
         Ok((start, vec![]))
     }
 }
@@ -1083,6 +1334,11 @@ fn should_invalidate_cache(cmd: &Command) -> bool {
             | Command::Touch { .. }
             | Command::Desc { .. }
             | Command::Ec { .. }
+            | Command::AclDeploy { .. }
+            | Command::AclEdit { .. }
+            | Command::AclDestroy { .. }
+            | Command::PskCreate { .. }
+            | Command::PskDestroy { .. }
     )
 }
 
@@ -1249,6 +1505,16 @@ pub(crate) fn apply_shell_cwd(cmd: Command, shell_cwd: Option<&str>) -> Result<C
         Command::Reindex { path } => Command::Reindex {
             path: resolve_shell_tree_scope(&path, shell_cwd)?,
         },
+        Command::Whoami => Command::Whoami,
+        Command::AclList => Command::AclList,
+        Command::AclGet { name } => Command::AclGet { name },
+        Command::AclDeploy { name, file } => Command::AclDeploy { name, file },
+        Command::AclEdit { name } => Command::AclEdit { name },
+        Command::AclDestroy { name } => Command::AclDestroy { name },
+        Command::PskList => Command::PskList,
+        Command::PskGet => Command::PskGet,
+        Command::PskCreate { name, acl_name } => Command::PskCreate { name, acl_name },
+        Command::PskDestroy { name } => Command::PskDestroy { name },
         Command::Test => Command::Test,
         Command::Shell { parents, cwd } => Command::Shell {
             parents,
@@ -2742,6 +3008,8 @@ mod shell_initial_cwd_mkdir_parents_tests {
             db,
             wait_timeout: Duration::from_secs(3),
             process_started_at: Monotonic::now(),
+            authenticate_api: false,
+            authenticate_mcp: false,
         });
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();

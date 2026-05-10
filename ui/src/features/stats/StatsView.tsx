@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import type { ChartData } from "chart.js";
-import { listDirectory } from "../../api/client";
+import { listDirectory, rpcCall } from "../../api/client";
 import { useAppShell } from "../../app/appShellContext";
 import { KIND_DIR, KIND_FILE } from "../entries/entryModel";
 import styles from "./StatsView.module.scss";
@@ -96,6 +96,17 @@ const mbFmt2 = new Intl.NumberFormat(undefined, {
   maximumFractionDigits: 2,
 });
 
+interface WhoamiPermissions {
+  allow?: { read?: string[]; write?: string[] };
+  deny?: { read?: string[]; write?: string[] };
+}
+
+interface Whoami {
+  acl: string | null;
+  admin: boolean;
+  permissions: WhoamiPermissions | unknown;
+}
+
 const mbFmt1 = new Intl.NumberFormat(undefined, {
   minimumFractionDigits: 1,
   maximumFractionDigits: 1,
@@ -149,21 +160,110 @@ function chartFromSlices(
   };
 }
 
+function normalizePaths(raw: string[] | undefined): string[] {
+  if (!raw || !Array.isArray(raw)) return [];
+  return raw.filter((s) => typeof s === "string" && s.trim() !== "");
+}
+
+function PathColumn({
+  title,
+  paths,
+}: {
+  title: string;
+  paths: string[];
+}) {
+  return (
+    <div className={styles.aclPathColumn}>
+      <div className={styles.aclPathColumnTitle}>{title}</div>
+      {paths.length === 0 ? (
+        <span className={styles.aclPathEmpty}>—</span>
+      ) : (
+        <ul className={styles.aclPathList}>
+          {paths.map((p, i) => (
+            <li key={`${title}:${i}:${p}`} className={styles.aclPathItem}>
+              {p}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function AclIdentityPanel({ who }: { who: Whoami }) {
+  const perms =
+    typeof who.permissions === "object" && who.permissions !== null
+      ? (who.permissions as WhoamiPermissions)
+      : {};
+  const allowRead = normalizePaths(perms.allow?.read);
+  const allowWrite = normalizePaths(perms.allow?.write);
+  const denyRead = normalizePaths(perms.deny?.read);
+  const denyWrite = normalizePaths(perms.deny?.write);
+
+  return (
+    <section className={styles.aclSeal} data-testid="stats-acl-panel">
+      <div className={styles.aclSealTop}>
+        <span className={styles.aclSealMark} aria-hidden>
+          ◈
+        </span>
+        <div className={styles.aclSealHeading}>
+          <span className={styles.aclSealKicker}>Lexicanum seal</span>
+          <h2 className={styles.aclSealName}>{who.acl?.trim() || "—"}</h2>
+        </div>
+      </div>
+      <div className={styles.aclSealBadgeRow}>
+        <span
+          className={who.admin ? styles.aclBadgeAdmin : styles.aclBadgeScoped}
+          data-testid="stats-acl-role"
+        >
+          {who.admin ? "Administrator" : "Scoped operator"}
+        </span>
+      </div>
+      {who.admin ? (
+        <p className={styles.aclAdminLitany}>
+          Writ across the whole librarium — deny/allow lists waived by the Golden Throne.
+        </p>
+      ) : (
+        <div className={styles.aclMatrix}>
+          <div className={styles.aclMatrixRow}>
+            <PathColumn title="Allow · read" paths={allowRead} />
+            <PathColumn title="Allow · write" paths={allowWrite} />
+          </div>
+          <div className={styles.aclMatrixRow}>
+            <PathColumn title="Deny · read" paths={denyRead} />
+            <PathColumn title="Deny · write" paths={denyWrite} />
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function StatsView() {
   const { setAppReady } = useAppShell();
   const [err, setErr] = useState<string | null>(null);
   const [totals, setTotals] = useState<Totals | null>(null);
+  const [whoami, setWhoami] = useState<Whoami | null>(null);
+  const [statsLimited, setStatsLimited] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
+        const who = await rpcCall<Whoami>("whoami", {});
+        if (!cancelled && !who.admin) {
+          setWhoami(who);
+          setStatsLimited(true);
+          setAppReady();
+          return;
+        }
         const [agg, chartSlices] = await Promise.all([
           walkTotals(),
           collectTopLevelChartSlices(),
         ]);
         if (!cancelled) {
           setTotals({ ...agg, chartSlices });
+          setWhoami(who);
           setAppReady();
         }
       } catch (e) {
@@ -186,7 +286,7 @@ export default function StatsView() {
     );
   }
 
-  if (!totals) {
+  if (!totals && !statsLimited) {
     return (
       <div className={styles.root} data-testid="stats-root">
         <p>Scanning the librarium…</p>
@@ -194,11 +294,27 @@ export default function StatsView() {
     );
   }
 
+  if (statsLimited && whoami) {
+    return (
+      <div className={styles.root} data-testid="stats-root">
+        <AclIdentityPanel who={whoami} />
+        <p className={styles.chartEmpty}>
+          Aggregate totals and charts are hidden for non-administrators.
+        </p>
+      </div>
+    );
+  }
+
+  if (!totals) {
+    return null;
+  }
+
   const chartData =
     totals.chartSlices.length > 0 ? chartFromSlices(totals.chartSlices) : null;
 
   return (
     <div className={styles.root} data-testid="stats-root">
+      {whoami ? <AclIdentityPanel who={whoami} /> : null}
       <div className={styles.grid}>
         <div className={styles.card} data-testid="stats-total-files">
           <div className={styles.cardLabel}>Files</div>

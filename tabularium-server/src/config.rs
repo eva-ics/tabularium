@@ -22,6 +22,9 @@ pub struct McpSection {
     /// e.g. `127.0.0.1:3031`; when unset, the MCP listener is not started.
     #[serde(default)]
     pub listen: Option<String>,
+    /// When true, MCP tools require `X-Auth-Key` on streamable HTTP requests (same semantics as REST).
+    #[serde(default)]
+    pub authenticate: bool,
     /// Deployment-specific help text (read at startup).
     #[serde(default)]
     pub server_help: Option<std::path::PathBuf>,
@@ -47,6 +50,9 @@ pub struct ServerSection {
     /// Long-poll `wait` / `?wait=true` ceiling (seconds); default 3600.
     #[serde(default = "default_timeout_secs")]
     pub timeout: u64,
+    /// When true, REST + JSON-RPC require `X-Auth-Key` for every method except `test` (health payload).
+    #[serde(default)]
+    pub authenticate: bool,
 }
 
 pub fn load(path: &Path) -> Result<Config> {

@@ -3,8 +3,10 @@
 use std::sync::Arc;
 
 use axum::Router;
+use http::request::Parts;
 use rmcp::{
     ServerHandler,
+    handler::server::tool::Extension,
     handler::server::{tool::ToolRouter, wrapper::Parameters},
     model::{ServerCapabilities, ServerInfo},
     tool, tool_handler, tool_router,
@@ -22,6 +24,7 @@ use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
+use crate::auth::{RequestAuth, resolve_request_auth};
 use crate::web::{AppState, RpcAppError, dispatch_app_rpc};
 
 const MCP_HELP_BASE: &str = include_str!("../res/mcp/help.txt");
@@ -78,6 +81,16 @@ tail — path, lines optional (default 10 last lines like GNU tail); number, str
 slice — path, start_line/end_line or from_line/to_line aliases (1-based inclusive); numbers or string integers.
 grep — path, pattern, max_matches optional (0 = unlimited), invert_match optional (default false). Line-level regex within that single document; not repo-wide search.
 wait — path (long-poll until document changes or server timeout).
+
+**ACL / PSK (same semantics as POST /rpc; send `X-Auth-Key` when `[mcp].authenticate=true`):**
+whoami — (no params) Resolved ACL JSON for the caller.
+acl_list — (no params) List ACL name + body rows (admin when auth on).
+acl_get — name (string).
+acl_put — name, body (validated ACL JSON string).
+acl_destroy — name (string).
+psk_list — (no params).
+psk_create — name (PSK handle), acl_name (string).
+psk_destroy — name (PSK handle).
 
 When `mcp.full = true` in server config, destructive tools are also registered — see suffix in tool `methods` output.
 "#;
@@ -141,7 +154,12 @@ impl TabulariumMcp {
         self.tool_router.has_route(name)
     }
 
-    async fn call_rpc_json(&self, method: &str, params: Value) -> Result<String, String> {
+    async fn call_rpc_json(
+        &self,
+        parts: &Parts,
+        method: &str,
+        params: Value,
+    ) -> Result<String, String> {
         let mcp_destructive = MCP_FULL_ONLY_TOOL_NAMES.contains(&method);
         info!(
             target: "tabularium_server::rpc",
@@ -152,8 +170,18 @@ impl TabulariumMcp {
             params = %crate::rpc_preview::format_rpc_params_preview(Some(&params)),
             "RPC request"
         );
+        let auth: RequestAuth = if !self.app.authenticate_mcp {
+            RequestAuth::Disabled
+        } else if method == "test" {
+            RequestAuth::Disabled
+        } else {
+            match resolve_request_auth(self.app.db.as_ref(), true, &parts.headers).await {
+                Ok(a) => a,
+                Err(e) => return Err(e.to_string()),
+            }
+        };
         let map = params.as_object().cloned().unwrap_or_default();
-        match dispatch_app_rpc(&self.app, method, map).await {
+        match dispatch_app_rpc(&self.app, &auth, method, map).await {
             Ok(v) => Ok(if v.is_null() {
                 "null".to_string()
             } else {
@@ -344,12 +372,38 @@ struct ReindexArg {
     path: Option<String>,
 }
 
+#[derive(Deserialize, JsonSchema)]
+struct AclNameArg {
+    name: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct AclPutArg {
+    name: String,
+    body: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct PskCreateArg {
+    name: String,
+    acl_name: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct PskDestroyArg {
+    name: String,
+}
+
 #[tool_router]
 impl TabulariumMcp {
     #[tool(
         description = "Base help: Tabularium as fs-like shared librarium for spirits, plus a one-line tool index. For full parameter shapes call `methods`."
     )]
-    async fn help(&self, Parameters(_): Parameters<Empty>) -> String {
+    async fn help(
+        &self,
+        Extension(_parts): Extension<Parts>,
+        Parameters(_): Parameters<Empty>,
+    ) -> String {
         let mut t = MCP_HELP_BASE.to_string();
         t.push_str("\n\n");
         t.push_str(TOOL_NAMES_LINE);
@@ -360,14 +414,22 @@ impl TabulariumMcp {
         name = "server_help",
         description = "Optional deployment help text from config `server_help` path; empty string when unset."
     )]
-    async fn server_help_tool(&self, Parameters(_): Parameters<Empty>) -> String {
+    async fn server_help_tool(
+        &self,
+        Extension(_parts): Extension<Parts>,
+        Parameters(_): Parameters<Empty>,
+    ) -> String {
         self.server_help.to_string()
     }
 
     #[tool(
         description = "Terse catalog of MCP tools and JSON parameter fields (matches JSON-RPC where applicable)."
     )]
-    async fn methods(&self, Parameters(_): Parameters<Empty>) -> String {
+    async fn methods(
+        &self,
+        Extension(_parts): Extension<Parts>,
+        Parameters(_): Parameters<Empty>,
+    ) -> String {
         let mut s = MCP_METHODS_CATALOG.to_string();
         if self.mcp_full {
             s.push_str(MCP_METHODS_CATALOG_FULL);
@@ -376,8 +438,12 @@ impl TabulariumMcp {
     }
 
     #[tool(description = "Read full document body and metadata (JSON-RPC get_document).")]
-    async fn get_document(&self, Parameters(p): Parameters<PathArg>) -> Result<String, String> {
-        self.call_rpc_json("get_document", json!({ "path": p.path }))
+    async fn get_document(
+        &self,
+        Extension(parts): Extension<Parts>,
+        Parameters(p): Parameters<PathArg>,
+    ) -> Result<String, String> {
+        self.call_rpc_json(&parts, "get_document", json!({ "path": p.path }))
             .await
     }
 
@@ -386,9 +452,11 @@ impl TabulariumMcp {
     )]
     async fn put_document(
         &self,
+        Extension(parts): Extension<Parts>,
         Parameters(p): Parameters<PathContentForce>,
     ) -> Result<String, String> {
         self.call_rpc_json(
+            &parts,
             "put_document",
             json!({
                 "path": p.path,
@@ -405,9 +473,11 @@ impl TabulariumMcp {
     )]
     async fn create_document(
         &self,
+        Extension(parts): Extension<Parts>,
         Parameters(p): Parameters<PathContentCreate>,
     ) -> Result<String, String> {
         self.call_rpc_json(
+            &parts,
             "create_document",
             json!({
                 "path": p.path,
@@ -424,9 +494,11 @@ impl TabulariumMcp {
     )]
     async fn append_document(
         &self,
+        Extension(parts): Extension<Parts>,
         Parameters(p): Parameters<PathContentForce>,
     ) -> Result<String, String> {
         self.call_rpc_json(
+            &parts,
             "append_document",
             json!({ "path": p.path, "content": p.content, "force": p.force }),
         )
@@ -438,9 +510,11 @@ impl TabulariumMcp {
     )]
     async fn append_if_not_contains(
         &self,
+        Extension(parts): Extension<Parts>,
         Parameters(p): Parameters<PathMarkerContent>,
     ) -> Result<String, String> {
         self.call_rpc_json(
+            &parts,
             "append_if_not_contains",
             json!({
                 "path": p.path,
@@ -454,8 +528,13 @@ impl TabulariumMcp {
     #[tool(
         description = "Append a markdown chat block; **preferred for meetings and conversations** — `from_id` is the sender nickname recorded in the appended block. Do not include your nickname in `content` (JSON-RPC say_document)."
     )]
-    async fn say_document(&self, Parameters(p): Parameters<SayArg>) -> Result<String, String> {
+    async fn say_document(
+        &self,
+        Extension(parts): Extension<Parts>,
+        Parameters(p): Parameters<SayArg>,
+    ) -> Result<String, String> {
         self.call_rpc_json(
+            &parts,
             "say_document",
             json!({ "path": p.path, "from_id": p.from_id, "content": p.content }),
         )
@@ -467,6 +546,7 @@ impl TabulariumMcp {
     )]
     async fn list_directory(
         &self,
+        Extension(parts): Extension<Parts>,
         Parameters(p): Parameters<ListDirectoryArg>,
     ) -> Result<String, String> {
         let mut m = Map::new();
@@ -475,19 +555,24 @@ impl TabulariumMcp {
         {
             m.insert("path".into(), json!(path));
         }
-        self.call_rpc_json("list_directory", Value::Object(m)).await
+        self.call_rpc_json(&parts, "list_directory", Value::Object(m))
+            .await
     }
 
     #[tool(
         description = "Indexed full-text search across document bodies (JSON-RPC search); optional path limits subtree. For path/name in the tree use list_directory; for line-regex in one file use grep."
     )]
-    async fn search(&self, Parameters(p): Parameters<SearchArg>) -> Result<String, String> {
+    async fn search(
+        &self,
+        Extension(parts): Extension<Parts>,
+        Parameters(p): Parameters<SearchArg>,
+    ) -> Result<String, String> {
         let mut m = Map::new();
         m.insert("query".into(), json!(p.query));
         if let Some(path) = p.path.filter(|s| !s.is_empty()) {
             m.insert("path".into(), json!(path));
         }
-        self.call_rpc_json("search", Value::Object(m)).await
+        self.call_rpc_json(&parts, "search", Value::Object(m)).await
     }
 
     #[tool(
@@ -495,6 +580,7 @@ impl TabulariumMcp {
     )]
     async fn create_directory(
         &self,
+        Extension(parts): Extension<Parts>,
         Parameters(p): Parameters<CreateDirectoryArg>,
     ) -> Result<String, String> {
         let mut m = Map::new();
@@ -505,42 +591,65 @@ impl TabulariumMcp {
         if p.parents {
             m.insert("parents".into(), json!(true));
         }
-        self.call_rpc_json("create_directory", Value::Object(m))
+        self.call_rpc_json(&parts, "create_directory", Value::Object(m))
             .await
     }
 
     #[tool(
         description = "Get or set `description` on a file or directory (JSON-RPC describe). Omit `description` to read; pass a string to set; empty string clears."
     )]
-    async fn describe(&self, Parameters(p): Parameters<DescribeArg>) -> Result<String, String> {
+    async fn describe(
+        &self,
+        Extension(parts): Extension<Parts>,
+        Parameters(p): Parameters<DescribeArg>,
+    ) -> Result<String, String> {
         let mut m = Map::new();
         m.insert("path".into(), json!(p.path));
         if let Some(d) = p.description {
             m.insert("description".into(), json!(d));
         }
-        self.call_rpc_json("describe", Value::Object(m)).await
+        self.call_rpc_json(&parts, "describe", Value::Object(m))
+            .await
     }
 
     #[tool(description = "Whether path is an existing file (JSON-RPC exists).")]
-    async fn document_exists(&self, Parameters(p): Parameters<PathArg>) -> Result<String, String> {
-        self.call_rpc_json("exists", json!({ "path": p.path }))
+    async fn document_exists(
+        &self,
+        Extension(parts): Extension<Parts>,
+        Parameters(p): Parameters<PathArg>,
+    ) -> Result<String, String> {
+        self.call_rpc_json(&parts, "exists", json!({ "path": p.path }))
             .await
     }
 
     #[tool(description = "File metadata and line count (JSON-RPC stat).")]
-    async fn stat(&self, Parameters(p): Parameters<PathArg>) -> Result<String, String> {
-        self.call_rpc_json("stat", json!({ "path": p.path })).await
+    async fn stat(
+        &self,
+        Extension(parts): Extension<Parts>,
+        Parameters(p): Parameters<PathArg>,
+    ) -> Result<String, String> {
+        self.call_rpc_json(&parts, "stat", json!({ "path": p.path }))
+            .await
     }
 
     #[tool(description = "Line/word/byte counts (JSON-RPC wc).")]
-    async fn wc(&self, Parameters(p): Parameters<PathArg>) -> Result<String, String> {
-        self.call_rpc_json("wc", json!({ "path": p.path })).await
+    async fn wc(
+        &self,
+        Extension(parts): Extension<Parts>,
+        Parameters(p): Parameters<PathArg>,
+    ) -> Result<String, String> {
+        self.call_rpc_json(&parts, "wc", json!({ "path": p.path }))
+            .await
     }
 
     #[tool(
         description = "First N logical lines (JSON-RPC head). `lines` optional (default 10); number or string integer. `0` returns no lines."
     )]
-    async fn head(&self, Parameters(p): Parameters<HeadArg>) -> Result<String, String> {
+    async fn head(
+        &self,
+        Extension(parts): Extension<Parts>,
+        Parameters(p): Parameters<HeadArg>,
+    ) -> Result<String, String> {
         let mut m = Map::new();
         m.insert("path".into(), json!(p.path));
         if let Some(l) = p.lines {
@@ -549,29 +658,38 @@ impl TabulariumMcp {
                 json!(l.parse_u32().map_err(|e| e.to_string())?),
             );
         }
-        self.call_rpc_json("head", Value::Object(m)).await
+        self.call_rpc_json(&parts, "head", Value::Object(m)).await
     }
 
     #[tool(
         description = "Tail of file (JSON-RPC tail). `lines` optional (default 10 last lines); number, string integer (`0` = no lines), or '+N' from-line."
     )]
-    async fn tail(&self, Parameters(p): Parameters<TailArg>) -> Result<String, String> {
+    async fn tail(
+        &self,
+        Extension(parts): Extension<Parts>,
+        Parameters(p): Parameters<TailArg>,
+    ) -> Result<String, String> {
         let mut m = Map::new();
         m.insert("path".into(), json!(p.path));
         m.insert(
             "lines".into(),
             tail_lines_to_rpc_value(p.lines.as_ref()).map_err(|e| e.to_string())?,
         );
-        self.call_rpc_json("tail", Value::Object(m)).await
+        self.call_rpc_json(&parts, "tail", Value::Object(m)).await
     }
 
     #[tool(
         description = "Inclusive 1-based line range (JSON-RPC slice). `start_line`/`end_line` or `from_line`/`to_line`; number or string integer."
     )]
-    async fn slice(&self, Parameters(p): Parameters<SliceArg>) -> Result<String, String> {
+    async fn slice(
+        &self,
+        Extension(parts): Extension<Parts>,
+        Parameters(p): Parameters<SliceArg>,
+    ) -> Result<String, String> {
         let start = p.start_line.parse_u32().map_err(|e| e.to_string())?;
         let end = p.end_line.parse_u32().map_err(|e| e.to_string())?;
         self.call_rpc_json(
+            &parts,
             "slice",
             json!({
                 "path": p.path,
@@ -585,8 +703,13 @@ impl TabulariumMcp {
     #[tool(
         description = "Regex line matches within one document (JSON-RPC grep); max_matches 0 = unlimited. Not indexed repo-wide search — use search; not tree listing — use list_directory."
     )]
-    async fn grep(&self, Parameters(p): Parameters<GrepArg>) -> Result<String, String> {
+    async fn grep(
+        &self,
+        Extension(parts): Extension<Parts>,
+        Parameters(p): Parameters<GrepArg>,
+    ) -> Result<String, String> {
         self.call_rpc_json(
+            &parts,
             "grep",
             json!({
                 "path": p.path,
@@ -599,15 +722,111 @@ impl TabulariumMcp {
     }
 
     #[tool(description = "Long-poll until document changes or timeout (JSON-RPC wait).")]
-    async fn wait(&self, Parameters(p): Parameters<PathArg>) -> Result<String, String> {
-        self.call_rpc_json("wait", json!({ "path": p.path })).await
+    async fn wait(
+        &self,
+        Extension(parts): Extension<Parts>,
+        Parameters(p): Parameters<PathArg>,
+    ) -> Result<String, String> {
+        self.call_rpc_json(&parts, "wait", json!({ "path": p.path }))
+            .await
+    }
+
+    #[tool(
+        description = "Resolved ACL identity JSON (`whoami` RPC). Valid `X-Auth-Key` required when `[mcp].authenticate=true`."
+    )]
+    async fn whoami(
+        &self,
+        Extension(parts): Extension<Parts>,
+        Parameters(_): Parameters<Empty>,
+    ) -> Result<String, String> {
+        self.call_rpc_json(&parts, "whoami", json!({})).await
+    }
+
+    #[tool(
+        description = "List ACL definitions (`acl_list`). Admin ACL required when `[mcp].authenticate=true`."
+    )]
+    async fn acl_list(
+        &self,
+        Extension(parts): Extension<Parts>,
+        Parameters(_): Parameters<Empty>,
+    ) -> Result<String, String> {
+        self.call_rpc_json(&parts, "acl_list", json!({})).await
+    }
+
+    #[tool(description = "Fetch one ACL body JSON (`acl_get`). Admin when auth on.")]
+    async fn acl_get(
+        &self,
+        Extension(parts): Extension<Parts>,
+        Parameters(p): Parameters<AclNameArg>,
+    ) -> Result<String, String> {
+        self.call_rpc_json(&parts, "acl_get", json!({ "name": p.name }))
+            .await
+    }
+
+    #[tool(
+        description = "Upsert ACL (`acl_put`); body must be valid ACL JSON. Admin when auth on."
+    )]
+    async fn acl_put(
+        &self,
+        Extension(parts): Extension<Parts>,
+        Parameters(p): Parameters<AclPutArg>,
+    ) -> Result<String, String> {
+        self.call_rpc_json(&parts, "acl_put", json!({ "name": p.name, "body": p.body }))
+            .await
+    }
+
+    #[tool(description = "Delete ACL and cascade keys (`acl_destroy`). Admin when auth on.")]
+    async fn acl_destroy(
+        &self,
+        Extension(parts): Extension<Parts>,
+        Parameters(p): Parameters<AclNameArg>,
+    ) -> Result<String, String> {
+        self.call_rpc_json(&parts, "acl_destroy", json!({ "name": p.name }))
+            .await
+    }
+
+    #[tool(description = "List PSK rows (`psk_list`). Admin when auth on.")]
+    async fn psk_list(
+        &self,
+        Extension(parts): Extension<Parts>,
+        Parameters(_): Parameters<Empty>,
+    ) -> Result<String, String> {
+        self.call_rpc_json(&parts, "psk_list", json!({})).await
+    }
+
+    #[tool(description = "Create PSK for ACL (`psk_create`). Admin when auth on.")]
+    async fn psk_create(
+        &self,
+        Extension(parts): Extension<Parts>,
+        Parameters(p): Parameters<PskCreateArg>,
+    ) -> Result<String, String> {
+        self.call_rpc_json(
+            &parts,
+            "psk_create",
+            json!({ "name": p.name, "acl_name": p.acl_name }),
+        )
+        .await
+    }
+
+    #[tool(description = "Delete PSK (`psk_destroy`). Admin when auth on.")]
+    async fn psk_destroy(
+        &self,
+        Extension(parts): Extension<Parts>,
+        Parameters(p): Parameters<PskDestroyArg>,
+    ) -> Result<String, String> {
+        self.call_rpc_json(&parts, "psk_destroy", json!({ "name": p.name }))
+            .await
     }
 
     #[tool(
         description = "Delete a file (JSON-RPC delete_document). **Registered only when `mcp.full = true` in server config.**"
     )]
-    async fn delete_document(&self, Parameters(p): Parameters<PathArg>) -> Result<String, String> {
-        self.call_rpc_json("delete_document", json!({ "path": p.path }))
+    async fn delete_document(
+        &self,
+        Extension(parts): Extension<Parts>,
+        Parameters(p): Parameters<PathArg>,
+    ) -> Result<String, String> {
+        self.call_rpc_json(&parts, "delete_document", json!({ "path": p.path }))
             .await
     }
 
@@ -616,9 +835,11 @@ impl TabulariumMcp {
     )]
     async fn delete_directory(
         &self,
+        Extension(parts): Extension<Parts>,
         Parameters(p): Parameters<DeleteDirectoryArg>,
     ) -> Result<String, String> {
         self.call_rpc_json(
+            &parts,
             "delete_directory",
             json!({ "path": p.path, "recursive": p.recursive }),
         )
@@ -630,9 +851,11 @@ impl TabulariumMcp {
     )]
     async fn rename_document(
         &self,
+        Extension(parts): Extension<Parts>,
         Parameters(p): Parameters<RenameDocumentArg>,
     ) -> Result<String, String> {
         self.call_rpc_json(
+            &parts,
             "rename_document",
             json!({ "path": p.path, "new_name": p.new_name }),
         )
@@ -644,9 +867,11 @@ impl TabulariumMcp {
     )]
     async fn rename_directory(
         &self,
+        Extension(parts): Extension<Parts>,
         Parameters(p): Parameters<RenameDirectoryArg>,
     ) -> Result<String, String> {
         self.call_rpc_json(
+            &parts,
             "rename_directory",
             json!({ "path": p.path, "new_path": p.new_path }),
         )
@@ -658,9 +883,11 @@ impl TabulariumMcp {
     )]
     async fn move_document(
         &self,
+        Extension(parts): Extension<Parts>,
         Parameters(p): Parameters<MoveDocumentArg>,
     ) -> Result<String, String> {
         self.call_rpc_json(
+            &parts,
             "move_document",
             json!({ "path": p.path, "new_path": p.new_path }),
         )
@@ -672,9 +899,11 @@ impl TabulariumMcp {
     )]
     async fn move_directory(
         &self,
+        Extension(parts): Extension<Parts>,
         Parameters(p): Parameters<MoveDirectoryArg>,
     ) -> Result<String, String> {
         self.call_rpc_json(
+            &parts,
             "move_directory",
             json!({
                 "path": p.path,
@@ -688,12 +917,17 @@ impl TabulariumMcp {
     #[tool(
         description = "Rebuild search index (JSON-RPC reindex); optional path limits subtree. **Registered only when `mcp.full = true`.**"
     )]
-    async fn reindex(&self, Parameters(p): Parameters<ReindexArg>) -> Result<String, String> {
+    async fn reindex(
+        &self,
+        Extension(parts): Extension<Parts>,
+        Parameters(p): Parameters<ReindexArg>,
+    ) -> Result<String, String> {
         let mut m = Map::new();
         if let Some(path) = p.path.filter(|s| !s.is_empty()) {
             m.insert("path".into(), json!(path));
         }
-        self.call_rpc_json("reindex", Value::Object(m)).await
+        self.call_rpc_json(&parts, "reindex", Value::Object(m))
+            .await
     }
 }
 

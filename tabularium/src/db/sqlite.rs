@@ -12,6 +12,7 @@ use super::entry_kind::EntryKind;
 use super::meta::{DocumentMeta, ListedEntry};
 use super::storage::Storage;
 use crate::resource_path::{canonical_path_segments, parent_and_final_name};
+use crate::validation::validate_entity_name;
 use crate::{Error, Result};
 
 const ROOT_ID: i64 = 1;
@@ -59,9 +60,93 @@ async fn backfill_null_file_revisions(pool: &SqlitePool) -> Result<()> {
     Ok(())
 }
 
+async fn access_keys_has_name_column(pool: &SqlitePool) -> Result<bool> {
+    if !table_exists(pool, "access_keys").await? {
+        return Ok(false);
+    }
+    let n: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('access_keys') WHERE name = 'name'",
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok(n > 0)
+}
+
+/// Stage-1 testing: if `access_keys` predates the `name` column, drop and recreate empty (no legacy PSK migration).
+async fn ensure_access_keys_named_schema(pool: &SqlitePool) -> Result<()> {
+    if !table_exists(pool, "acls").await? {
+        return Ok(());
+    }
+    if !table_exists(pool, "access_keys").await? {
+        sqlx::query(
+            r"CREATE TABLE access_keys (
+            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+            name TEXT NOT NULL UNIQUE,
+            key TEXT NOT NULL UNIQUE,
+            acl_id INTEGER NOT NULL REFERENCES acls(id) ON DELETE CASCADE
+        )",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_access_keys_acl ON access_keys(acl_id)")
+            .execute(pool)
+            .await?;
+        return Ok(());
+    }
+    if access_keys_has_name_column(pool).await? {
+        return Ok(());
+    }
+    sqlx::query("DROP TABLE access_keys").execute(pool).await?;
+    sqlx::query(
+        r"CREATE TABLE access_keys (
+            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+            name TEXT NOT NULL UNIQUE,
+            key TEXT NOT NULL UNIQUE,
+            acl_id INTEGER NOT NULL REFERENCES acls(id) ON DELETE CASCADE
+        )",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_access_keys_acl ON access_keys(acl_id)")
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+async fn ensure_acl_tables(pool: &SqlitePool) -> Result<()> {
+    if table_exists(pool, "acls").await? {
+        return Ok(());
+    }
+    sqlx::query(
+        r"CREATE TABLE acls (
+            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+            name TEXT NOT NULL UNIQUE,
+            body_json TEXT NOT NULL
+        )",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        r"CREATE TABLE access_keys (
+            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+            name TEXT NOT NULL UNIQUE,
+            key TEXT NOT NULL UNIQUE,
+            acl_id INTEGER NOT NULL REFERENCES acls(id) ON DELETE CASCADE
+        )",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_access_keys_acl ON access_keys(acl_id)")
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 async fn migrate(pool: &SqlitePool) -> Result<()> {
     if table_exists(pool, "entries").await? {
         ensure_revision_column(pool).await?;
+        ensure_acl_tables(pool).await?;
+        ensure_access_keys_named_schema(pool).await?;
         return Ok(());
     }
     sqlx::query(
@@ -101,6 +186,8 @@ async fn migrate(pool: &SqlitePool) -> Result<()> {
     .bind(now)
     .execute(pool)
     .await?;
+    ensure_acl_tables(pool).await?;
+    ensure_access_keys_named_schema(pool).await?;
     Ok(())
 }
 
@@ -147,6 +234,107 @@ impl SqliteStorage {
             return Error::NotEmpty("directory is not empty".into());
         }
         err.into()
+    }
+
+    /// ACL rows `(name, body_json)` for operator rites.
+    #[instrument(name = "sqlite_acl_list", skip(self), err(Debug))]
+    pub async fn acl_list_rows(&self) -> Result<Vec<(String, String)>> {
+        let rows: Vec<(String, String)> =
+            sqlx::query_as("SELECT name, body_json FROM acls ORDER BY name ASC")
+                .fetch_all(&self.pool)
+                .await?;
+        Ok(rows)
+    }
+
+    #[instrument(name = "sqlite_acl_get", skip(self), fields(name = %name), err(Debug))]
+    pub async fn acl_get_json(&self, name: &str) -> Result<String> {
+        let row: Option<(String,)> = sqlx::query_as("SELECT body_json FROM acls WHERE name = ?")
+            .bind(name)
+            .fetch_optional(&self.pool)
+            .await?;
+        row.map(|t| t.0)
+            .ok_or_else(|| Error::NotFound(format!("acl `{name}`")))
+    }
+
+    #[instrument(name = "sqlite_acl_upsert", skip(self, body_json), fields(name = %name), err(Debug))]
+    pub async fn acl_upsert_validated(&self, name: &str, body_json: &str) -> Result<()> {
+        validate_entity_name(name)?;
+        crate::parse_acl_json(body_json)?;
+        sqlx::query(
+            r"INSERT INTO acls (name, body_json) VALUES (?, ?)
+              ON CONFLICT(name) DO UPDATE SET body_json = excluded.body_json",
+        )
+        .bind(name)
+        .bind(body_json)
+        .execute(&self.pool)
+        .await
+        .map_err(Self::map_sqlite_constraint)?;
+        Ok(())
+    }
+
+    #[instrument(name = "sqlite_acl_delete", skip(self), fields(name = %name), err(Debug))]
+    pub async fn acl_delete_named(&self, name: &str) -> Result<()> {
+        let r = sqlx::query("DELETE FROM acls WHERE name = ?")
+            .bind(name)
+            .execute(&self.pool)
+            .await?;
+        if r.rows_affected() == 0 {
+            return Err(Error::NotFound(format!("acl `{name}`")));
+        }
+        Ok(())
+    }
+
+    #[instrument(name = "sqlite_auth_lookup_key", skip(self, key), err(Debug))]
+    pub async fn auth_lookup_key(&self, key: &str) -> Result<Option<(String, String)>> {
+        let row: Option<(String, String)> = sqlx::query_as(
+            "SELECT a.name, a.body_json FROM access_keys k JOIN acls a ON k.acl_id = a.id WHERE k.key = ?",
+        )
+        .bind(key)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    #[instrument(name = "sqlite_psk_list", skip(self), err(Debug))]
+    pub async fn psk_list_rows(&self) -> Result<Vec<(String, String, String)>> {
+        let rows: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT k.name, a.name, k.key FROM access_keys k JOIN acls a ON k.acl_id = a.id ORDER BY a.name ASC, k.name ASC, k.key ASC",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    #[instrument(name = "sqlite_psk_insert", skip(self, key), fields(psk_name = %psk_name, acl_name = %acl_name), err(Debug))]
+    pub async fn psk_insert(&self, psk_name: &str, acl_name: &str, key: &str) -> Result<()> {
+        validate_entity_name(psk_name)?;
+        let acl_id: Option<i64> = sqlx::query_scalar("SELECT id FROM acls WHERE name = ?")
+            .bind(acl_name)
+            .fetch_optional(&self.pool)
+            .await?;
+        let Some(aid) = acl_id else {
+            return Err(Error::NotFound(format!("acl `{acl_name}`")));
+        };
+        sqlx::query("INSERT INTO access_keys (name, key, acl_id) VALUES (?, ?, ?)")
+            .bind(psk_name)
+            .bind(key)
+            .bind(aid)
+            .execute(&self.pool)
+            .await
+            .map_err(Self::map_sqlite_constraint)?;
+        Ok(())
+    }
+
+    #[instrument(name = "sqlite_psk_delete", skip(self), fields(psk_name = %psk_name), err(Debug))]
+    pub async fn psk_delete_named(&self, psk_name: &str) -> Result<()> {
+        let r = sqlx::query("DELETE FROM access_keys WHERE name = ?")
+            .bind(psk_name)
+            .execute(&self.pool)
+            .await?;
+        if r.rows_affected() == 0 {
+            return Err(Error::NotFound(format!("psk `{psk_name}`")));
+        }
+        Ok(())
     }
 }
 

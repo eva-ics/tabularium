@@ -89,6 +89,16 @@ fn lexical_normalize_absolute_path(path: &str) -> Result<String> {
     }
 }
 
+/// Child absolute path under `dir_abs` (`/` allowed as directory path).
+pub fn join_under_directory(dir_abs: &str, child_name: &str) -> String {
+    debug_assert!(dir_abs.starts_with('/'));
+    if dir_abs == "/" {
+        format!("/{}", child_name)
+    } else {
+        format!("{}/{}", dir_abs, child_name)
+    }
+}
+
 /// User-facing path: add a leading `/` when absent (`notes/a` → `/notes/a`).
 pub fn normalize_user_path(path: &str) -> Result<String> {
     let t = path.trim();

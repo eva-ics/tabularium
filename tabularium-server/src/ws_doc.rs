@@ -4,6 +4,8 @@ use std::sync::Arc;
 
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::http::HeaderMap;
+use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use serde::{Deserialize, Deserializer};
 use serde_json::json;
@@ -13,6 +15,7 @@ use tabularium::{EntryId, Error, SqliteDatabase};
 use tokio::sync::watch as wait_cell;
 use tracing::info;
 
+use crate::auth::{RequestAuth, check_read, check_write, resolve_request_auth};
 use crate::web::AppState;
 
 fn deserialize_subscribe_lines<'de, D>(deserializer: D) -> Result<TailMode, D::Error>
@@ -63,8 +66,22 @@ struct ActiveSub {
     rx: wait_cell::Receiver<u64>,
 }
 
-pub async fn ws_upgrade(ws: WebSocketUpgrade, State(st): State<AppState>) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_socket(socket, st.db.clone()))
+pub async fn ws_upgrade(
+    ws: WebSocketUpgrade,
+    State(st): State<AppState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let auth: RequestAuth = if !st.authenticate_api {
+        RequestAuth::Disabled
+    } else {
+        match resolve_request_auth(st.db.as_ref(), true, &headers).await {
+            Ok(a) => a,
+            Err(e) => {
+                return (StatusCode::UNAUTHORIZED, e.to_string()).into_response();
+            }
+        }
+    };
+    ws.on_upgrade(move |socket| handle_socket(socket, st.db.clone(), auth))
 }
 
 async fn resolve_did(db: &SqliteDatabase, path: &str) -> tabularium::Result<EntryId> {
@@ -85,6 +102,7 @@ async fn send_err(socket: &mut WebSocket, msg: impl Into<String>) -> bool {
 
 async fn handle_client_text(
     db: &SqliteDatabase,
+    auth: &RequestAuth,
     socket: &mut WebSocket,
     text: &str,
     active: &mut Option<ActiveSub>,
@@ -102,6 +120,9 @@ async fn handle_client_text(
                 Ok(x) => x,
                 Err(e) => return send_err(socket, e.to_string()).await,
             };
+            if let Err(e) = check_read(auth, &path) {
+                return send_err(socket, e.to_string()).await;
+            }
             let did = match resolve_did(db, &path).await {
                 Ok(d) => d,
                 Err(e) => return send_err(socket, e.to_string()).await,
@@ -148,6 +169,9 @@ async fn handle_client_text(
                 Ok(x) => x,
                 Err(e) => return send_err(socket, e.to_string()).await,
             };
+            if let Err(e) = check_write(auth, &p) {
+                return send_err(socket, e.to_string()).await;
+            }
             if let Err(e) = db.append_document_by_path(&p, &data, true).await {
                 return send_err(socket, e.to_string()).await;
             }
@@ -169,6 +193,9 @@ async fn handle_client_text(
                 Ok(x) => x,
                 Err(e) => return send_err(socket, e.to_string()).await,
             };
+            if let Err(e) = check_write(auth, &p) {
+                return send_err(socket, e.to_string()).await;
+            }
             if let Err(e) = db.say_document_by_path(&p, &from_id, &data).await {
                 return send_err(socket, e.to_string()).await;
             }
@@ -221,7 +248,7 @@ async fn on_doc_changed(db: &SqliteDatabase, socket: &mut WebSocket, sub: &mut A
     true
 }
 
-async fn handle_socket(mut socket: WebSocket, db: Arc<SqliteDatabase>) {
+async fn handle_socket(mut socket: WebSocket, db: Arc<SqliteDatabase>, auth: RequestAuth) {
     let mut active: Option<ActiveSub> = None;
 
     loop {
@@ -249,7 +276,8 @@ async fn handle_socket(mut socket: WebSocket, db: Arc<SqliteDatabase>) {
                     match frame {
                         Ok(Message::Text(t)) => {
                             active = Some(sub);
-                            if !handle_client_text(&db, &mut socket, t.as_str(), &mut active).await
+                            if !handle_client_text(&db, &auth, &mut socket, t.as_str(), &mut active)
+                                .await
                             {
                                 break;
                             }
@@ -273,7 +301,7 @@ async fn handle_socket(mut socket: WebSocket, db: Arc<SqliteDatabase>) {
             };
             match frame {
                 Ok(Message::Text(t)) => {
-                    if !handle_client_text(&db, &mut socket, t.as_str(), &mut active).await {
+                    if !handle_client_text(&db, &auth, &mut socket, t.as_str(), &mut active).await {
                         break;
                     }
                 }

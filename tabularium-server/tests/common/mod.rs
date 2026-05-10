@@ -14,11 +14,15 @@ pub struct TestServer {
     _dir: tempfile::TempDir,
 }
 
+#[allow(dead_code)]
 pub async fn spawn_test_server() -> TestServer {
-    spawn_test_server_with_wait_timeout(Duration::from_secs(3)).await
+    spawn_test_server_with_wait_timeout(Duration::from_secs(3), false).await
 }
 
-pub async fn spawn_test_server_with_wait_timeout(wait_timeout: Duration) -> TestServer {
+pub async fn spawn_test_server_with_wait_timeout(
+    wait_timeout: Duration,
+    authenticate_api: bool,
+) -> TestServer {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("t.db");
     let idx_path = dir.path().join("t.idx");
@@ -28,6 +32,8 @@ pub async fn spawn_test_server_with_wait_timeout(wait_timeout: Duration) -> Test
         db,
         wait_timeout,
         process_started_at: Monotonic::now(),
+        authenticate_api,
+        authenticate_mcp: false,
     });
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

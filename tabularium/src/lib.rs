@@ -13,6 +13,8 @@ mod error;
 pub mod jsonrpc_codes;
 mod validation;
 
+#[cfg(feature = "db")]
+pub mod acl;
 #[cfg(feature = "client")]
 pub mod client_headers;
 #[cfg(feature = "db")]
@@ -25,6 +27,8 @@ pub mod text_lines;
 #[cfg(feature = "client")]
 pub mod ws;
 
+#[cfg(feature = "db")]
+pub use acl::{AclBodyJson, AuthContext, parse_acl_json};
 #[cfg(feature = "db")]
 pub use bma_ts::Timestamp;
 #[cfg(feature = "client")]

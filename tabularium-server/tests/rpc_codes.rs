@@ -21,6 +21,8 @@ async fn unknown_rpc_method_returns_minus_32601() {
         db,
         wait_timeout: Duration::from_secs(3600),
         process_started_at: Monotonic::now(),
+        authenticate_api: false,
+        authenticate_mcp: false,
     });
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -66,6 +68,8 @@ async fn invalid_rpc_params_return_minus_32602() {
         db,
         wait_timeout: Duration::from_secs(3600),
         process_started_at: Monotonic::now(),
+        authenticate_api: false,
+        authenticate_mcp: false,
     });
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -106,6 +110,8 @@ async fn rpc_duplicate_create_document_returns_duplicate_resource_code() {
         db,
         wait_timeout: Duration::from_secs(3600),
         process_started_at: Monotonic::now(),
+        authenticate_api: false,
+        authenticate_mcp: false,
     });
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

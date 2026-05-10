@@ -17,6 +17,8 @@ async fn rest_root_listing_and_rpc_list_directory() {
         db: db.clone(),
         wait_timeout: Duration::from_secs(3600),
         process_started_at: Monotonic::now(),
+        authenticate_api: false,
+        authenticate_mcp: false,
     });
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

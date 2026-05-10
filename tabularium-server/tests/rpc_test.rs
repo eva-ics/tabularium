@@ -21,6 +21,8 @@ async fn rpc_test_returns_identity_and_uptime() {
         db,
         wait_timeout: Duration::from_secs(3600),
         process_started_at: started,
+        authenticate_api: false,
+        authenticate_mcp: false,
     });
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -57,6 +59,7 @@ async fn rpc_test_returns_identity_and_uptime() {
         .as_u64()
         .expect("uptime must be u64 JSON number");
     assert!(uptime > 0, "expected some elapsed nanoseconds");
+    assert_eq!(res["authenticate_api"], false);
 }
 
 #[tokio::test]
@@ -70,6 +73,8 @@ async fn rpc_test_rejects_extra_params() {
         db,
         wait_timeout: Duration::from_secs(3600),
         process_started_at: Monotonic::now(),
+        authenticate_api: false,
+        authenticate_mcp: false,
     });
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

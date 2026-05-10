@@ -49,7 +49,7 @@ async fn rest_wait_returns_204_on_write() {
 
 #[tokio::test]
 async fn rest_wait_times_out_504() {
-    let s = spawn_test_server_with_wait_timeout(Duration::from_millis(400)).await;
+    let s = spawn_test_server_with_wait_timeout(Duration::from_millis(400), false).await;
     let base = &s.base_url;
     let client = Client::builder()
         .timeout(Duration::from_secs(5))

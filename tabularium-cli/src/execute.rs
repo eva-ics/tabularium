@@ -9,6 +9,7 @@ use std::time::UNIX_EPOCH;
 use filetime::{FileTime, set_file_mtime};
 use globset::GlobBuilder;
 use regex::Regex;
+use serde_json::{Value, json};
 use tabularium::Error;
 use tabularium::TailMode;
 use tabularium::Timestamp;
@@ -259,6 +260,92 @@ async fn run_ls_listing(
     let mut rows = client.list_directory(&dir_path).await?;
     sort_ls_rows(&mut rows, sort_by_time, reverse);
     print_ls_rows(&rows);
+    Ok(())
+}
+
+fn rw_paths<'a>(branch: &'a Value, key: &str) -> &'a [Value] {
+    branch
+        .get(key)
+        .and_then(|v| v.as_array())
+        .map(Vec::as_slice)
+        .unwrap_or(&[])
+}
+
+fn push_path_block(out: &mut String, heading: &str, paths: &[Value]) {
+    use std::fmt::Write as _;
+    let _ = writeln!(out, "{heading}");
+    if paths.is_empty() {
+        let _ = writeln!(out, "  (none)");
+    } else {
+        for p in paths {
+            if let Some(s) = p.as_str() {
+                let _ = writeln!(out, "  {s}");
+            }
+        }
+    }
+    let _ = writeln!(out);
+}
+
+/// Pretty ACL body for terminal operators (JSON-RPC `acl_get`).
+fn format_acl_human_readable(name: &str, body_json: &str) -> Result<String, BoxErr> {
+    let acl: Value =
+        serde_json::from_str(body_json).map_err(|e| -> BoxErr { e.to_string().into() })?;
+    let admin = acl.get("admin").and_then(|v| v.as_bool()).unwrap_or(false);
+    let allow = acl.get("allow").cloned().unwrap_or(json!({}));
+    let deny = acl.get("deny").cloned().unwrap_or(json!({}));
+
+    let mut out = String::new();
+    use std::fmt::Write as _;
+    let _ = writeln!(out, "ACL: {name}");
+    let _ = writeln!(out, "Administrator: {}", if admin { "yes" } else { "no" });
+    let _ = writeln!(out);
+
+    push_path_block(&mut out, "Allow — read:", rw_paths(&allow, "read"));
+    push_path_block(&mut out, "Allow — write:", rw_paths(&allow, "write"));
+    push_path_block(&mut out, "Deny — read:", rw_paths(&deny, "read"));
+    push_path_block(&mut out, "Deny — write:", rw_paths(&deny, "write"));
+
+    // Trim trailing blank lines for cleaner pipe-out.
+    Ok(out.trim_end().to_string() + "\n")
+}
+
+fn psk_table_rows_from_json(v: &Value) -> Result<Vec<Vec<String>>, BoxErr> {
+    let arr = v.as_array().ok_or("psk_list: expected JSON array")?;
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    for row in arr {
+        let name = row
+            .get("name")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string();
+        let acl = row
+            .get("acl_name")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string();
+        let key = row
+            .get("key")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string();
+        rows.push(vec![acl, name, key]);
+    }
+    rows.sort_by(|a, b| {
+        a[0].cmp(&b[0])
+            .then_with(|| a[1].cmp(&b[1]))
+            .then_with(|| a[2].cmp(&b[2]))
+    });
+    Ok(rows)
+}
+
+fn print_psk_cli_table(rows: &[Vec<String>]) -> Result<(), BoxErr> {
+    if io::stdout().is_terminal() {
+        print_cli_table(true, &["acl", "name", "key"], rows);
+    } else {
+        for r in rows {
+            println!("{}\t{}\t{}", r[0], r[1], r[2]);
+        }
+    }
     Ok(())
 }
 
@@ -972,8 +1059,136 @@ pub(crate) async fn execute(
                 ("product_name", t.product_name()),
                 ("product_version", t.product_version()),
                 ("uptime", uptime_display.as_str()),
+                (
+                    "authenticate_api",
+                    if t.authenticate_api() {
+                        "true"
+                    } else {
+                        "false"
+                    },
+                ),
             ];
             print_cli_kv_rows(&rows);
+        }
+        Command::Whoami => {
+            let v = client.whoami().await?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&v).map_err(|e| -> BoxErr { e.to_string().into() })?
+            );
+        }
+        Command::AclList => {
+            let v = client.acl_list().await?;
+            let arr = v.as_array().ok_or("acl_list: expected JSON array")?;
+            let mut rows: Vec<Vec<String>> = Vec::new();
+            for row in arr {
+                let name = row
+                    .get("name")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let admin_cell = row
+                    .get("body")
+                    .and_then(|b| b.as_str())
+                    .and_then(|s| serde_json::from_str::<Value>(s).ok())
+                    .and_then(|j| j.get("admin").and_then(|a| a.as_bool()))
+                    .map(|b| if b { "yes" } else { "no" }.to_string())
+                    .unwrap_or_else(|| "?".to_string());
+                rows.push(vec![name, admin_cell]);
+            }
+            rows.sort_by(|a, b| a[0].cmp(&b[0]));
+            if io::stdout().is_terminal() {
+                print_cli_table(true, &["name", "admin"], &rows);
+            } else {
+                for r in rows {
+                    println!("{}\t{}", r[0], r[1]);
+                }
+            }
+        }
+        Command::AclGet { name } => {
+            validate_entity_name(name.trim()).map_err(|e| -> BoxErr { e.to_string().into() })?;
+            let v = client.acl_get(name.trim()).await?;
+            let body = v
+                .get("body")
+                .and_then(|b| b.as_str())
+                .ok_or("acl_get: missing body")?;
+            let disp = v
+                .get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or(name.trim());
+            let text = format_acl_human_readable(disp, body)?;
+            print!("{text}");
+        }
+        Command::AclEdit { name } => {
+            validate_entity_name(name.trim()).map_err(|e| -> BoxErr { e.to_string().into() })?;
+            let template = r#"{
+  "admin": false,
+  "allow": { "read": [], "write": [] },
+  "deny": { "read": [], "write": [] }
+}"#;
+            let initial = match client.acl_get(name.trim()).await {
+                Ok(v) => v
+                    .get("body")
+                    .and_then(|b| b.as_str())
+                    .unwrap_or(template)
+                    .to_string(),
+                Err(_) => template.to_string(),
+            };
+            let mut tmp = tempfile::Builder::new()
+                .suffix(".tabularium-acl.json")
+                .tempfile()
+                .map_err(|e| -> BoxErr { e.to_string().into() })?;
+            std::io::Write::write_all(&mut tmp, initial.as_bytes())
+                .map_err(|e| -> BoxErr { e.to_string().into() })?;
+            tmp.flush()
+                .map_err(|e| -> BoxErr { e.to_string().into() })?;
+            let path = tmp.path().to_path_buf();
+            let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".into());
+            let st = StdCommand::new(&editor)
+                .arg(&path)
+                .status()
+                .map_err(|e| -> BoxErr { format!("{editor}: {e}").into() })?;
+            if !st.success() {
+                return Err(format!("$EDITOR exited with {st}").into());
+            }
+            let new_body =
+                std::fs::read_to_string(&path).map_err(|e| -> BoxErr { e.to_string().into() })?;
+            client.acl_put(name.trim(), &new_body).await?;
+        }
+        Command::AclDeploy { name, file } => {
+            validate_entity_name(name.trim()).map_err(|e| -> BoxErr { e.to_string().into() })?;
+            let body = read_input(file.as_deref().map(str::trim).filter(|s| !s.is_empty()))
+                .map_err(|e| -> BoxErr { e.to_string().into() })?;
+            client.acl_put(name.trim(), body.trim()).await?;
+        }
+        Command::AclDestroy { name } => {
+            validate_entity_name(name.trim()).map_err(|e| -> BoxErr { e.to_string().into() })?;
+            client.acl_destroy(name.trim()).await?;
+        }
+        Command::PskList => {
+            let v = client.psk_list().await?;
+            let rows = psk_table_rows_from_json(&v)?;
+            print_psk_cli_table(&rows)?;
+        }
+        Command::PskGet => {
+            let v = client.psk_list().await?;
+            let rows = psk_table_rows_from_json(&v)?;
+            print_psk_cli_table(&rows)?;
+        }
+        Command::PskCreate { name, acl_name } => {
+            validate_entity_name(name.trim()).map_err(|e| -> BoxErr { e.to_string().into() })?;
+            validate_entity_name(acl_name.trim())
+                .map_err(|e| -> BoxErr { e.to_string().into() })?;
+            let v = client.psk_create(name.trim(), acl_name.trim()).await?;
+            let key = v
+                .get("key")
+                .and_then(|x| x.as_str())
+                .ok_or_else(|| -> BoxErr { "psk_create: missing key in response".into() })?;
+            println!("{key}");
+        }
+        Command::PskDestroy { name } => {
+            validate_entity_name(name.trim()).map_err(|e| -> BoxErr { e.to_string().into() })?;
+            client.psk_destroy(name.trim()).await?;
         }
         Command::Wc { path } => {
             let paths = resolve_read_file_paths(client, path.trim()).await?;
@@ -2510,6 +2725,8 @@ mod mcd_ec_integration_tests {
             db,
             wait_timeout: Duration::from_secs(3),
             process_started_at: Monotonic::now(),
+            authenticate_api: false,
+            authenticate_mcp: false,
         });
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();

@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { AppShellContext } from "./appShellContext";
 import styles from "./AppShell.module.scss";
+import { useTabulariumTrustedAuth } from "./trustedAuthContext";
 
 export function AppShell() {
+  const trustedAuth = useTabulariumTrustedAuth();
   const [ready, setReady] = useState(false);
   const ctx = useMemo(
     () => ({
@@ -49,6 +51,16 @@ export function AppShell() {
           >
             Stats
           </NavLink>
+          {trustedAuth?.authenticateApi ? (
+            <button
+              type="button"
+              className={styles.navBtn}
+              data-testid="top-nav-logout"
+              onClick={() => trustedAuth.logoutPskSession()}
+            >
+              Logout
+            </button>
+          ) : null}
         </header>
         <main className={styles.main}>
           <Outlet />

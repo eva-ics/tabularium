@@ -19,6 +19,7 @@ homedir = "0.3.6"
 ratatui = { version = "0.29", default-features = false, features = ["crossterm"] }
 regex = "1"
 rustyline = "17.0.1"
+serde_json = "1"
 shell-words = "1.1.1"
 tabularium = { path = "../tabularium", default-features = false, features = ["client"] }
 tempfile = "3"

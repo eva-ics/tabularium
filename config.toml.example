@@ -8,10 +8,15 @@ index_dir = "./data/tabularium.index"
 workers = 1
 # Long-poll `wait` RPC / `?wait=true` max wait (seconds)
 timeout = 3600
+# When true, REST + POST /rpc require `X-Auth-Key` matching an `access_keys` row (stage-1 ACL).
+# Recovery if locked out: set back to false, restart, fix ACLs — see meeting docs / operator scroll.
+authenticate = true
 
 # Optional MCP (streamable HTTP). Build with: cargo build -p tabularium-server --features mcp
 [mcp]
 listen = "127.0.0.1:3031"
+# Same semantics as `[server].authenticate` for streamable HTTP MCP tools.
+authenticate = false
 # WARNING: `full = true` registers destructive MCP tools (delete/move/rename document or directory, reindex).
 # Same authentication as JSON-RPC — trusted private / operator-controlled deployments only. Omit or false for safe default.
 # full = false

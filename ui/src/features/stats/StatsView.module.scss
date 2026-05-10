@@ -52,3 +52,136 @@
   margin: 0;
   font-size: 0.9rem;
 }
+
+.aclSeal {
+  background: linear-gradient(
+    165deg,
+    $bg-elevated 0%,
+    $bg-panel 45%,
+    $bg-elevated 100%
+  );
+  border: 1px solid $border;
+  border-radius: 8px;
+  padding: 1rem 1.15rem;
+  margin-bottom: 1.25rem;
+  box-shadow: 0 6px 28px rgba(0, 0, 0, 0.28);
+}
+
+.aclSealTop {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+}
+
+.aclSealMark {
+  flex-shrink: 0;
+  font-size: 1.35rem;
+  line-height: 1;
+  color: $accent;
+  margin-top: 0.1rem;
+}
+
+.aclSealHeading {
+  min-width: 0;
+}
+
+.aclSealKicker {
+  display: block;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: $accent-dim;
+}
+
+.aclSealName {
+  margin: 0.2rem 0 0;
+  font-size: 1.35rem;
+  font-weight: 600;
+  color: $text;
+  letter-spacing: 0.02em;
+}
+
+.aclSealBadgeRow {
+  margin-top: 0.65rem;
+}
+
+.aclBadgeAdmin {
+  display: inline-block;
+  padding: 0.2rem 0.55rem;
+  border-radius: 4px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border: 1px solid $accent;
+  color: $accent;
+  background: rgba($accent, 0.08);
+}
+
+.aclBadgeScoped {
+  display: inline-block;
+  padding: 0.2rem 0.55rem;
+  border-radius: 4px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border: 1px solid $border;
+  color: $text-muted;
+  background: $bg-panel;
+}
+
+.aclAdminLitany {
+  margin: 0.75rem 0 0;
+  font-size: 0.82rem;
+  color: $text-muted;
+  line-height: 1.45;
+}
+
+.aclMatrix {
+  margin-top: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.aclMatrixRow {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 0.65rem;
+}
+
+.aclPathColumn {
+  background: $bg-panel;
+  border: 1px solid $border;
+  border-radius: 6px;
+  padding: 0.5rem 0.55rem;
+  min-height: 3rem;
+}
+
+.aclPathColumnTitle {
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: $text-muted;
+  margin-bottom: 0.35rem;
+}
+
+.aclPathEmpty {
+  font-size: 0.85rem;
+  color: $text-muted;
+}
+
+.aclPathList {
+  margin: 0;
+  padding-left: 1rem;
+  font-size: 0.78rem;
+  color: $dir-foreground;
+  line-height: 1.35;
+}
+
+.aclPathItem {
+  word-break: break-word;
+}

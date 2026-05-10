@@ -53,7 +53,7 @@ async function request(path: string, init?: RequestInit): Promise<Response> {
   return fetch(path, { ...init, headers });
 }
 
-async function rpcCall<T>(
+export async function rpcCall<T>(
   method: string,
   params: Record<string, unknown>,
 ): Promise<T> {

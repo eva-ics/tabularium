@@ -37,13 +37,16 @@ fn merged_extra_headers(cli: &Cli) -> Result<HeaderMap, String> {
     name = "tb",
     version,
     about = "tabularium CLI (JSON-RPC)",
-    after_long_help = "Environment:\n  TB_HEADERS  Optional extra HTTP headers on every RPC and WebSocket request.\n              One `Name: value` per line (newline-separated); `#` starts a comment line.\n              Precedence: TB_HEADERS < repeated --header (later wins per header name).\n"
+    after_long_help = "Environment:\n  TB_HEADERS  Optional extra HTTP headers on every RPC and WebSocket request.\n              One `Name: value` per line (newline-separated); `#` starts a comment line.\n              Precedence: TB_HEADERS < repeated --header < -k/--key (later wins per header name).\n"
 )]
 pub(crate) struct Cli {
     #[arg(short = 't', default_value_t = 5)]
     timeout_sec: u64,
     #[arg(short = 'u', default_value = "http://127.0.0.1:3050")]
     api_uri: String,
+    /// Pre-shared key sent as `X-Auth-Key` on every RPC/WebSocket request when the server requires authentication (stage-1 ACL).
+    #[arg(short = 'k', long = "key", value_name = "PSK")]
+    auth_key: Option<String>,
     /// Extra HTTP header on every RPC and WebSocket request (repeatable). Visible in `ps` and shell history — prefer TB_HEADERS for secrets.
     #[arg(long = "header", value_name = "NAME: VALUE", action = clap::ArgAction::Append)]
     header: Vec<String>,
@@ -61,6 +64,25 @@ pub(crate) struct ShellCommandOnly {
 
 #[derive(Clone, Subcommand)]
 pub(crate) enum Command {
+    /// Deploy ACL JSON via `acl_put`: body from `FILE`, or stdin until EOF when omitted.
+    #[command(name = "acl-deploy")]
+    AclDeploy {
+        name: String,
+        /// Host-local file containing ACL JSON; omit to read stdin (Ctrl-D / EOF).
+        file: Option<String>,
+    },
+    /// Delete an ACL and cascade its PSKs (`acl_destroy`).
+    #[command(name = "acl-destroy")]
+    AclDestroy { name: String },
+    /// Edit one ACL in `$EDITOR` (`acl_get` / `acl_put`).
+    #[command(name = "acl-edit")]
+    AclEdit { name: String },
+    /// Show one ACL in plain language (`acl_get` RPC; admin or auth disabled).
+    #[command(name = "acl-get")]
+    AclGet { name: String },
+    /// List ACL definitions (`acl_list` RPC; admin or auth disabled).
+    #[command(name = "acl-list")]
+    AclList,
     /// Append to a document (`DIR/FILE`). Default safe: errors with `Duplicate` if the
     /// document already exists; pass `--force` to deliberately append to an existing scroll.
     Append {
@@ -188,6 +210,18 @@ pub(crate) enum Command {
     },
     /// Move or rename a directory or file (`mv SRC DST`).
     Mv { src: String, dst: String },
+    /// Create a named PSK for an ACL (`psk_create`): `NAME` (globally unique) then `ACL`.
+    #[command(name = "psk-create")]
+    PskCreate { name: String, acl_name: String },
+    /// Delete a PSK by operator name (`psk_destroy`).
+    #[command(name = "psk-destroy")]
+    PskDestroy { name: String },
+    /// Print PSKs as a table sorted by ACL (`psk_list`).
+    #[command(name = "psk-get")]
+    PskGet,
+    /// List PSKs (`psk_list`).
+    #[command(name = "psk-list")]
+    PskList,
     /// Create a document (`DIR/FILE`). Default safe: errors with `Duplicate` if the
     /// document already exists; pass `--force` to deliberately overwrite an existing scroll.
     Put {
@@ -237,8 +271,6 @@ pub(crate) enum Command {
     },
     /// Metadata and line count.
     Stat { path: String },
-    /// Server diagnostics (`test` RPC): product name, version, uptime (nanoseconds).
-    Test,
     /// Last N lines of a document (`-n +K` = from line K, GNU `tail`; `-n 0` = no lines; with `-f`, no initial output then follow).
     Tail {
         #[arg(short = 'n', default_value = "10", value_parser = parse_cli_tail_mode)]
@@ -251,18 +283,26 @@ pub(crate) enum Command {
         #[arg(long)]
         raw: bool,
     },
+    /// Server diagnostics (`test` RPC): product name, version, uptime (nanoseconds).
+    Test,
     /// `PATH` creates/bumps `modified_at`; optional second arg sets exact `modified_at` (Unix **seconds** if all digits, else date/time string).
     Touch { path: String, time: Option<String> },
     /// Block until `DIR/FILE` changes (server long-poll timeout applies).
     Wait { path: String },
     /// Byte/line/word/char counts.
     Wc { path: String },
+    /// Show resolved ACL for the current key (`whoami` RPC).
+    Whoami,
 }
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let cli = Cli::parse();
-    let extra = merged_extra_headers(&cli)?;
+    let mut extra = merged_extra_headers(&cli)?;
+    if let Some(ref k) = cli.auth_key {
+        let line = format!("X-Auth-Key: {}", k.trim());
+        merge_header_line(&mut extra, &line).map_err(|e| e.to_string())?;
+    }
     let client = Client::init_with_extra_headers(
         &cli.api_uri,
         Duration::from_secs(cli.timeout_sec.max(1)),

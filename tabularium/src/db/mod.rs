@@ -25,6 +25,7 @@ use moka::future::Cache;
 use tokio::sync::{Mutex, watch as wait_cell};
 use tracing::instrument;
 
+use crate::acl::AuthContext;
 use crate::resource_path::{canonical_path_segments, parent_and_final_name};
 use crate::validation::validate_entity_name;
 use crate::{Error, Result, Timestamp};
@@ -116,6 +117,42 @@ impl SqliteDatabase {
             doc_wait: Arc::new(DashMap::new()),
             doc_append_locks: Arc::new(DashMap::new()),
         })
+    }
+
+    pub async fn acl_list_rows(&self) -> Result<Vec<(String, String)>> {
+        self.storage.acl_list_rows().await
+    }
+
+    pub async fn acl_get_json(&self, name: &str) -> Result<String> {
+        self.storage.acl_get_json(name).await
+    }
+
+    pub async fn acl_upsert_validated(&self, name: &str, body_json: &str) -> Result<()> {
+        self.storage.acl_upsert_validated(name, body_json).await
+    }
+
+    pub async fn acl_delete_named(&self, name: &str) -> Result<()> {
+        self.storage.acl_delete_named(name).await
+    }
+
+    pub async fn resolve_auth_key(&self, key: &str) -> Result<Option<AuthContext>> {
+        let Some((name, json)) = self.storage.auth_lookup_key(key).await? else {
+            return Ok(None);
+        };
+        let body = crate::parse_acl_json(&json)?;
+        Ok(Some(AuthContext::new(name, body)))
+    }
+
+    pub async fn psk_list_rows(&self) -> Result<Vec<(String, String, String)>> {
+        self.storage.psk_list_rows().await
+    }
+
+    pub async fn psk_insert(&self, psk_name: &str, acl_name: &str, key: &str) -> Result<()> {
+        self.storage.psk_insert(psk_name, acl_name, key).await
+    }
+
+    pub async fn psk_delete_named(&self, psk_name: &str) -> Result<()> {
+        self.storage.psk_delete_named(psk_name).await
     }
 }
 

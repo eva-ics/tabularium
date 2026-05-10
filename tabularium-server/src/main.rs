@@ -171,6 +171,8 @@ async fn run(cfg: config::Config) -> Result<(), Box<dyn std::error::Error + Send
         db,
         wait_timeout,
         process_started_at,
+        authenticate_api: cfg.server.authenticate,
+        authenticate_mcp: cfg.mcp.as_ref().map(|m| m.authenticate).unwrap_or(false),
     };
     let app = web::router(app_state.clone());
 

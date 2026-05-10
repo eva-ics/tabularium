@@ -4,6 +4,8 @@ Use it as the shared knowledge base per request: task scrolls, meetings, runbook
 
 This server speaks the same JSON-RPC vocabulary as POST /rpc (see tool `methods` for parameters). By default, destructive operations (delete/move/rename directory or document, reindex) are **not** registered as MCP tools. Set **`mcp.full = true`** in server config only on a **trusted private** Tabularium host to expose those tools through MCP; otherwise use CLI or REST with proper rites.
 
+When **`[mcp].authenticate = true`**, send **`X-Auth-Key`** with MCP requests; ACL admin management uses **`whoami`**, **`acl_*`**, and **`psk_*`** tools mirroring POST `/rpc`.
+
 **Doctrine — three rites, do not confuse them:** **find** (tree walk) = locate files and directories by path or name in the tree, using repeated **`list_directory`** calls — there is no separate MCP “find” tool. **search** = indexed full-text across **all document bodies** (Tantivy). **grep** = regex line matches **inside one document** only.
 
 **append_if_not_contains** (`path`, `marker`, `content`) appends raw bytes only when `marker` is not already a **substring** of the UTF-8 body (same semantics as Rust `str::contains`). The file **must exist** (otherwise the call errors). Returns JSON `{ "appended": bool, "revision": string }` — use `appended` like the older boolean wire shape; `revision` is the post-call file token.

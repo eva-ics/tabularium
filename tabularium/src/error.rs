@@ -16,6 +16,10 @@ pub enum Error {
     RevisionMismatch(String),
     #[error("not empty: {0}")]
     NotEmpty(String),
+    #[error("unauthorized: {0}")]
+    Unauthorized(String),
+    #[error("forbidden: {0}")]
+    Forbidden(String),
     #[error("invalid input: {0}")]
     InvalidInput(String),
     #[error("sql: {0}")]
