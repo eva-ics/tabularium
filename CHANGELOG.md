@@ -1,8 +1,25 @@
 # Changelog
 
-## Unreleased
+## 0.1.7 - 2026-05-11
 
-Safety release.
+Authentication, concurrency, and operator tooling release.
+
+- Adds built-in stage-1 authentication and authorization across REST,
+  JSON-RPC, WebSocket, and optional MCP auth: PSKs mapped to ACLs, `whoami`,
+  admin `acl_*` / `psk_*` workflows, and filtered list/search results.
+- Adds trusted upstream assertion support via `[oidc]` with local JWK/JWKS
+  verification and refresh, so deployments can accept proxy-minted JWT
+  assertions without treating hope as a security boundary.
+- Adds file `revision` UUIDs to file metadata and compare-and-swap writes via
+  `only_if_revision` on `put_document` and `create_document`, exposing
+  revision tokens through file reads and metadata APIs.
+- Adds `append_if_not_contains` for atomic marker-checked appends to existing
+  files, useful for idempotent meeting, task, and agent update flows.
+- Improves the Web UI with a PSK auth gate, trusted-session handling,
+  ACL-aware stats, preview polish, and entry workflow fixes.
+- Expands CLI, MCP, and docs coverage around auth, revisions, force guards,
+  and trusted `mcp.full` deployments, with regression matrices for ACLs,
+  stale-write detection, and guarded appends.
 
 - **Breaking**: `put_document` and `append_document` (JSON-RPC and MCP) now take an
   optional `force` boolean (default `false`). With `force=false`, an existing target
