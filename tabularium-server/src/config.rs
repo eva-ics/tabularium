@@ -13,6 +13,50 @@ pub struct Config {
     pub server: ServerSection,
     #[serde(default)]
     pub mcp: Option<McpSection>,
+    /// Signed assertion from upstream AAA/WAF — JWKS `key` URL/path, validated locally (see meeting `oidc`).
+    #[serde(default)]
+    pub oidc: Option<OidcSection>,
+}
+
+fn default_oidc_header() -> String {
+    "X-JWT-Assertion".into()
+}
+
+fn default_groups_field() -> String {
+    "groups".into()
+}
+
+fn default_oidc_refresh_secs() -> u64 {
+    3600
+}
+
+fn default_oidc_retry_secs() -> u64 {
+    10
+}
+
+fn default_oidc_timeout_secs() -> u64 {
+    10
+}
+
+/// Canonical STC `[oidc]` shape — **only** these keys (see meeting `oidc` / Enginseer scroll).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OidcSection {
+    /// JWKS JSON URL (`https://…`) or local path (`/etc/…/jwks.json`).
+    pub key: String,
+    #[serde(default = "default_oidc_header")]
+    pub header: String,
+    #[serde(default = "default_groups_field")]
+    pub groups_field: String,
+    #[serde(default = "default_oidc_refresh_secs")]
+    pub refresh: u64,
+    #[serde(default = "default_oidc_retry_secs")]
+    pub retry: u64,
+    /// JWKS HTTP fetch timeout per attempt (seconds); STC naming: `oidc`/timeout.
+    #[serde(default = "default_oidc_timeout_secs")]
+    pub timeout: u64,
+    #[serde(default)]
+    pub group_name_prefix: Option<String>,
 }
 
 /// Optional `[mcp]` — streamable HTTP MCP (`/mcp`); omit `listen` to keep MCP dormant.

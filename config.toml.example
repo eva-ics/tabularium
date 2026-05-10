@@ -10,14 +10,26 @@ workers = 1
 timeout = 3600
 # When true, REST + POST /rpc require `X-Auth-Key` matching an `access_keys` row (stage-1 ACL).
 # Recovery if locked out: set back to false, restart, fix ACLs — see meeting docs / operator scroll.
-authenticate = true
+#authenticate = true
+
+# Optional `[oidc]` — signed assertion from upstream AAA/WAF, validated locally via JWKS (`key` required when this section exists). Canonical STC field set only.
+# When the assertion header is absent, `X-Auth-Key` applies; when present (non-empty), JWT only — fail closed (no PSK fallback).
+# [oidc]
+# key = "/etc/tabularium/oidc.jwk"
+# header = "X-JWT-Assertion"
+# groups_field = "groups"
+# refresh = 3600
+# retry = 10
+# timeout = 10
+# group_name_prefix = "tb_"
 
 # Optional MCP (streamable HTTP). Build with: cargo build -p tabularium-server --features mcp
 [mcp]
 listen = "127.0.0.1:3031"
 # Same semantics as `[server].authenticate` for streamable HTTP MCP tools.
 authenticate = false
-# WARNING: `full = true` registers destructive MCP tools (delete/move/rename document or directory, reindex).
+# WARNING: `full = true` registers destructive MCP tools (delete/move/rename document or directory, reindex),
+# plus `whoami` and ACL/PSK admin tools (`acl_*`, `psk_*`).
 # Same authentication as JSON-RPC — trusted private / operator-controlled deployments only. Omit or false for safe default.
 # full = false
 # Optional path to deployment-specific help (read at startup).

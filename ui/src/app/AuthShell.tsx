@@ -17,6 +17,7 @@ import { verifyPskWithServer } from "./verifyPsk";
 export function AuthShell() {
   const [phase, setPhase] = useState<"load" | "gate" | "ok">("load");
   const [authenticateApi, setAuthenticateApi] = useState(true);
+  const [oidcAssertionAuth, setOidcAssertionAuth] = useState(false);
   const [gateError, setGateError] = useState<string | null>(null);
   const [gateBusy, setGateBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -31,14 +32,30 @@ export function AuthShell() {
     void (async () => {
       try {
         const r = await fetch("/api/test");
-        const j = (await r.json()) as { authenticate_api?: boolean };
+        const j = (await r.json()) as {
+          authenticate_api?: boolean;
+          oidc_enabled?: boolean;
+        };
         if (cancelled) return;
         if (!j.authenticate_api) {
           setAuthenticateApi(false);
+          setOidcAssertionAuth(false);
           setPhase("ok");
           return;
         }
         setAuthenticateApi(true);
+        if (j.oidc_enabled === true) {
+          const w = await fetch("/api/whoami");
+          if (cancelled) return;
+          if (w.ok && w.status === 200) {
+            setOidcAssertionAuth(true);
+            clearStoredPsk();
+            setAuthHeaderProvider(() => null);
+            setPhase("ok");
+            return;
+          }
+        }
+        setOidcAssertionAuth(false);
         const fromSession = sessionStorage.getItem(PSK_SESSION_STORAGE_KEY);
         if (fromSession && fromSession.trim() !== "") {
           const k = fromSession.trim();
@@ -98,9 +115,10 @@ export function AuthShell() {
   const trustedCtx = useMemo<TabulariumTrustedAuthValue>(
     () => ({
       authenticateApi,
+      oidcAssertionAuth,
       logoutPskSession,
     }),
-    [authenticateApi, logoutPskSession],
+    [authenticateApi, oidcAssertionAuth, logoutPskSession],
   );
 
   if (phase === "load") {
@@ -125,6 +143,11 @@ export function AuthShell() {
                 setGateBusy(false);
                 if (!v.ok) {
                   setGateError(v.message);
+                  const el = inputRef.current;
+                  if (el) {
+                    el.value = "";
+                    window.requestAnimationFrame(() => el.focus());
+                  }
                   return;
                 }
                 const trust = fd.get("trust") === "on";
@@ -152,7 +175,11 @@ export function AuthShell() {
               aria-describedby={gateError ? "tabularium-psk-error" : undefined}
             />
             {gateError ? (
-              <p id="tabularium-psk-error" className={styles.gateErr} role="alert">
+              <p
+                id="tabularium-psk-error"
+                className={styles.gateErr}
+                role="alert"
+              >
                 {gateError}
               </p>
             ) : null}
@@ -165,7 +192,11 @@ export function AuthShell() {
               />
               <span className={styles.trustLabel}>Trust this computer</span>
             </label>
-            <button type="submit" className={styles.enterBtn} disabled={gateBusy}>
+            <button
+              type="submit"
+              className={styles.enterBtn}
+              disabled={gateBusy}
+            >
               {gateBusy ? "…" : "Enter"}
             </button>
           </form>

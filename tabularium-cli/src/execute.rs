@@ -1,7 +1,7 @@
 //! Shared command execution for one-shot CLI and interactive shell.
 
 use std::fmt::Write as _;
-use std::io::{self, IsTerminal, Read, Write};
+use std::io::{self, BufRead, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command as StdCommand, Stdio};
 use std::time::UNIX_EPOCH;
@@ -13,6 +13,7 @@ use serde_json::{Value, json};
 use tabularium::Error;
 use tabularium::TailMode;
 use tabularium::Timestamp;
+use tabularium::parse_acl_json;
 use tabularium::resource_path::{normalize_user_path, parent_and_final_name};
 use tabularium::rpc::{Client, ListedEntryRow, SearchHitRow, StatRow};
 use tabularium::validate_chat_speaker_id;
@@ -792,6 +793,56 @@ async fn wait_in_shell_subprocess(path: &str, conn: &ShellChildRpc) -> Result<()
     Err(format!("wait subprocess exited with status {status}").into())
 }
 
+fn acl_edit_pause_before_reopen() -> Result<(), BoxErr> {
+    use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+    use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+
+    if !io::stdin().is_terminal() || !io::stderr().is_terminal() {
+        eprintln!("Press Enter to reopen $EDITOR (Ctrl+C to abort).");
+        io::stderr()
+            .flush()
+            .map_err(|e| -> BoxErr { e.to_string().into() })?;
+        let mut buf = String::new();
+        io::stdin()
+            .lock()
+            .read_line(&mut buf)
+            .map_err(|e| -> BoxErr { e.to_string().into() })?;
+        return Ok(());
+    }
+
+    eprintln!("Press any key to reopen $EDITOR (Ctrl+C aborts).");
+    io::stderr()
+        .flush()
+        .map_err(|e| -> BoxErr { e.to_string().into() })?;
+
+    enable_raw_mode().map_err(|e| -> BoxErr { format!("terminal raw mode: {e}").into() })?;
+
+    let pause_result = loop {
+        let ev = match event::read() {
+            Ok(e) => e,
+            Err(e) => {
+                let _ = disable_raw_mode();
+                return Err(e.into());
+            }
+        };
+        match ev {
+            Event::Key(key) if key.kind == KeyEventKind::Press => {
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    && matches!(key.code, KeyCode::Char('c'))
+                {
+                    break Err("acl-edit aborted".into());
+                }
+                break Ok(());
+            }
+            Event::Resize(_, _) => {}
+            _ => {}
+        }
+    };
+
+    disable_raw_mode().map_err(|e| -> BoxErr { format!("terminal restore: {e}").into() })?;
+    pause_result
+}
+
 /// Normal completion vs wait interrupted by Ctrl-C (CLI exits 130).
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ExecuteOutcome {
@@ -1067,6 +1118,10 @@ pub(crate) async fn execute(
                         "false"
                     },
                 ),
+                (
+                    "oidc_enabled",
+                    if t.oidc_enabled() { "true" } else { "false" },
+                ),
             ];
             print_cli_kv_rows(&rows);
         }
@@ -1144,16 +1199,28 @@ pub(crate) async fn execute(
                 .map_err(|e| -> BoxErr { e.to_string().into() })?;
             let path = tmp.path().to_path_buf();
             let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".into());
-            let st = StdCommand::new(&editor)
-                .arg(&path)
-                .status()
-                .map_err(|e| -> BoxErr { format!("{editor}: {e}").into() })?;
-            if !st.success() {
-                return Err(format!("$EDITOR exited with {st}").into());
+            loop {
+                let st = StdCommand::new(&editor)
+                    .arg(&path)
+                    .status()
+                    .map_err(|e| -> BoxErr { format!("{editor}: {e}").into() })?;
+                if !st.success() {
+                    return Err(format!("$EDITOR exited with {st}").into());
+                }
+                let new_body = std::fs::read_to_string(&path)
+                    .map_err(|e| -> BoxErr { e.to_string().into() })?;
+                let trimmed = new_body.trim();
+                match parse_acl_json(trimmed) {
+                    Ok(_) => {
+                        client.acl_put(name.trim(), trimmed).await?;
+                        break;
+                    }
+                    Err(e) => {
+                        eprintln!("{e}");
+                        acl_edit_pause_before_reopen()?;
+                    }
+                }
             }
-            let new_body =
-                std::fs::read_to_string(&path).map_err(|e| -> BoxErr { e.to_string().into() })?;
-            client.acl_put(name.trim(), &new_body).await?;
         }
         Command::AclDeploy { name, file } => {
             validate_entity_name(name.trim()).map_err(|e| -> BoxErr { e.to_string().into() })?;
@@ -2727,6 +2794,7 @@ mod mcd_ec_integration_tests {
             process_started_at: Monotonic::now(),
             authenticate_api: false,
             authenticate_mcp: false,
+            oidc: None,
         });
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();

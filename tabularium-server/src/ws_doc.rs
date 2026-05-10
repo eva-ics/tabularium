@@ -15,7 +15,7 @@ use tabularium::{EntryId, Error, SqliteDatabase};
 use tokio::sync::watch as wait_cell;
 use tracing::info;
 
-use crate::auth::{RequestAuth, check_read, check_write, resolve_request_auth};
+use crate::auth::{RequestAuth, check_read, check_write, resolve_request_auth_arc};
 use crate::web::AppState;
 
 fn deserialize_subscribe_lines<'de, D>(deserializer: D) -> Result<TailMode, D::Error>
@@ -74,7 +74,7 @@ pub async fn ws_upgrade(
     let auth: RequestAuth = if !st.authenticate_api {
         RequestAuth::Disabled
     } else {
-        match resolve_request_auth(st.db.as_ref(), true, &headers).await {
+        match resolve_request_auth_arc(st.db.as_ref(), true, &headers, st.oidc.as_ref()).await {
             Ok(a) => a,
             Err(e) => {
                 return (StatusCode::UNAUTHORIZED, e.to_string()).into_response();

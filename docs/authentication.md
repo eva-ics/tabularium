@@ -1,185 +1,233 @@
 # Authentication and authorization
 
-Tabularium itself does **not** implement built-in authentication or authorization.
+Tabularium now has built-in stage-1 authentication and authorization. The old
+"put it behind something else and hope" rite is still useful, but it is no
+longer the whole story.
 
-That applies to the server surfaces it exposes directly:
+## Surfaces and switches
+
+`[server].authenticate = true` protects the main HTTP surface:
 
 - web UI
-- REST API
-- JSON-RPC
-- document WebSocket
-- MCP endpoint
+- REST API under `/api`
+- JSON-RPC at `POST /rpc`
+- document WebSocket at `/ws`
 
-If you expose Tabularium beyond `localhost`, put it behind an external control plane such as:
+Two health probes stay open even when server auth is enabled:
 
-- a reverse proxy
-- a web front-end server
-- an API gateway
-- a WAF
-- a VPN / private network boundary
+- `GET /api/test`
+- JSON-RPC `test`
 
-Typical deployment pattern:
+`[mcp].authenticate = true` is a separate switch for the streamable HTTP MCP
+endpoint. It uses the same credential rules as `/rpc`, but you can keep MCP
+open or closed independently from the main HTTP server.
 
-1. The front-end proxy verifies the caller.
-2. The proxy allows or denies the request.
-3. The proxy optionally forwards credentials or identity headers upstream.
-4. Tabularium serves the request after the proxy has already made the access decision.
+## Supported auth modes
 
-## What Tabularium can and cannot do
+Tabularium supports two built-in credential paths:
 
-Tabularium can:
+1. Pre-shared keys (PSKs) mapped to ACLs
+2. Optional signed assertion tokens from a trusted upstream AAA/WAF via
+   `[oidc]`
 
-- listen on HTTP and let an external component protect it
-- accept ordinary HTTP headers from clients and proxies
-- let `tb` send extra headers on every JSON-RPC and WebSocket request
+Tabularium still does **not** provide:
 
-Tabularium cannot:
+- user accounts
+- passwords
+- sessions
+- OAuth login redirects
+- full IAM / RBAC modeling
 
-- manage users, passwords, sessions, roles, or ACLs
-- validate bearer tokens on its own
-- enforce per-document permissions on its own
+The model is intentionally smaller: one request resolves to one effective
+principal, then ACL checks happen on paths.
 
-## Keep it private
+## PSK + ACL model
 
-The simplest model is to bind Tabularium to `127.0.0.1` or a private network and only expose it through another service that already handles authentication.
+When auth is enabled and no assertion header is present, the caller must send:
 
-## HTTP Basic authentication at the proxy
-
-Your proxy can require HTTP Basic auth before forwarding to Tabularium.
-
-Example with `curl`:
-
-```bash
-export BASE=https://tabularium.example.com
-
-curl -sS -u 'alice:correct-horse-battery-staple' \
-  "$BASE/api/search?q=meeting"
+```http
+X-Auth-Key: <psk>
 ```
 
-Example with `tb` using `TB_HEADERS`:
+CLI shorthand:
 
 ```bash
-export BASIC_AUTH="$(printf '%s' 'alice:correct-horse-battery-staple' | base64)"
-export TB_HEADERS="$(cat <<EOF
-Authorization: Basic $BASIC_AUTH
-EOF
-)"
-
-tb -u https://tabularium.example.com ls /
-tb -u https://tabularium.example.com search meeting
+tb -u http://127.0.0.1:3050 -k YOUR_PSK whoami
 ```
 
-Ad-hoc example with `--header`:
+Each PSK belongs to exactly one ACL. One ACL may have many PSKs.
 
-```bash
-tb -u https://tabularium.example.com \
-  --header "Authorization: Basic $BASIC_AUTH" \
-  ls /
+ACL body JSON:
+
+```json
+{
+  "admin": false,
+  "allow": {
+    "read": ["/docs/*"],
+    "write": ["/docs/meeting.md"]
+  },
+  "deny": {
+    "read": [],
+    "write": ["/docs/secret/*"]
+  }
+}
 ```
 
-`--header` is convenient for one-off calls, but the value is visible in shell history and `ps`. For secrets, `TB_HEADERS` is the less embarrassing ritual.
+Rules:
 
-## Bearer token at the proxy or gateway
+- default deny
+- `deny` overrides `allow`
+- `admin: true` bypasses ACL checks, but not normal request validation
+- patterns are **absolute** paths (`/` root, `/foo/bar` file or directory, `/vault/*` subtree)
+- `/path/to/file` matches exactly that entry
+- `/path/to/dir/*` matches strict descendants only, not `/path/to/dir` itself
+- listing a directory without direct read on that path still returns **filtered**
+  child rows you may read
+- for navigation, a directory row may still be visible when an allow rule reaches
+  strictly inside it — e.g. `/test/*` surfaces `/test` in its parent listing, and
+  `/vault/deep/*` surfaces both `/vault` and `/vault/deep`
 
-Your proxy or gateway can require `Authorization: Bearer ...` before forwarding to Tabularium.
+Stage-1 tradeoff, documented rather than hidden:
 
-Example with `curl`:
+- PSKs are stored plaintext in the database
+- `psk_list` returns plaintext keys to admin callers
 
-```bash
-export BASE=https://tabularium.example.com
+That is intentional for the current operator model. If you need a more pious
+threat posture, put Tabularium behind a stronger control plane or use the
+upstream assertion flow below.
 
-curl -sS \
-  -H 'Authorization: Bearer YOUR_TOKEN' \
-  "$BASE/api/search?q=meeting"
+## Upstream signed assertion flow (`[oidc]`)
+
+`[oidc]` is not a generic public bearer-token feature. It is a
+trusted-upstream assertion flow:
+
+- your WAF / AAA layer authenticates the caller
+- that upstream emits a canonical signed assertion
+- Tabularium validates the assertion locally against JWK/JWKS
+
+Canonical config shape:
+
+```toml
+[oidc]
+key = "/etc/tabularium/oidc.jwk"
+# header = "X-JWT-Assertion"
+# groups_field = "groups"
+# refresh = 3600
+# retry = 10
+# timeout = 10
+# group_name_prefix = "tb_"
 ```
 
-Example with `tb`:
+Field semantics:
 
-```bash
-export TB_HEADERS="$(cat <<'EOF'
-Authorization: Bearer YOUR_TOKEN
-EOF
-)"
+- `key` is required when `[oidc]` is present; startup fails if it is empty
+- `key` may be a local JWKS file path or an `http(s)` URL
+- `header` defaults to `X-JWT-Assertion`
+- `groups_field` defaults to `groups`
+- `refresh` is the normal JWKS refresh interval in seconds
+- `retry` is the retry interval after a failed refresh
+- `timeout` is the JWKS HTTP fetch timeout in seconds
+- `group_name_prefix` filters token groups before ACL lookup; the prefix is
+  removed from matched groups
 
-tb -u https://tabularium.example.com test
-tb -u https://tabularium.example.com ls /
-```
+Verification and precedence:
 
-One-off invocation:
+- if the configured assertion header is absent, Tabularium falls back to
+  `X-Auth-Key`
+- if the assertion header is present but empty or invalid, the request fails
+  closed
+- if the assertion header is present and non-empty, Tabularium verifies the JWT
+  and does **not** fall back to PSK on failure
+- signature verification is mandatory
+- `exp` is required
+- `nbf` is validated when present
+- `iss` / `aud` are **not** configurable in the canonical format and are not
+  enforced by Tabularium
 
-```bash
-tb -u https://tabularium.example.com \
-  --header 'Authorization: Bearer YOUR_TOKEN' \
-  cat /notes/readme
-```
+JWKS refresh behavior:
 
-## Custom auth or identity headers
+- Tabularium loads JWKS at startup; unreachable or invalid JWKS aborts startup
+- after startup, failed refreshes retry forever at `retry` interval
+- the last good JWKS stays cached until a later refresh succeeds
 
-Some front-end systems do not use `Authorization` directly. They may expect or inject headers such as:
+## JWT groups to ACLs
 
-- `X-Forwarded-User`
-- `X-Auth-Request-User`
-- `X-Remote-User`
-- `X-Org`
-- `X-Role`
+JWT claims do not carry raw permissions. They resolve to local ACL names.
 
-In that model, the external front-end still performs authentication and authorization. The headers are just the contract between the client and that front-end, or between the front-end and Tabularium. Tabularium itself does not interpret `X-Forwarded-User`, `X-Role`, and similar headers as permission rules.
+Process:
 
-Example with `curl`:
+1. Read the configured `groups_field`
+2. Optionally filter groups by `group_name_prefix`
+3. Trim the prefix from matched groups
+4. Look up local ACLs with those names
+5. Merge all matched ACLs into one effective principal
 
-```bash
-curl -sS \
-  -H 'X-Forwarded-User: alice@example.com' \
-  -H 'X-Org: docs' \
-  'https://tabularium.example.com/api/doc'
-```
+Merge semantics:
 
-Example with `tb`:
+- allows are unioned
+- denies are unioned
+- any matched `admin: true` ACL makes the merged principal admin
 
-```bash
-export TB_HEADERS="$(cat <<'EOF'
-X-Forwarded-User: alice@example.com
-X-Org: docs
-EOF
-)"
+This means token order is not authorization policy. "First matching group wins"
+was rejected and duly buried.
 
-tb -u https://tabularium.example.com ls /
-tb -u https://tabularium.example.com chat /meetings/weekly.md -i Logis
-```
+## `whoami`, ACL admin, and recovery
 
-## `tb` header handling
+Any valid authenticated caller may use `whoami`:
 
-`tb` supports extra HTTP headers on every JSON-RPC request and every WebSocket upgrade.
+- REST: `GET /api/whoami`
+- JSON-RPC: `whoami`
+- MCP: `whoami`
 
-- Use repeated `--header 'Name: value'` for ad-hoc calls.
-- Use `TB_HEADERS` for secrets or shared session setup.
-- `TB_HEADERS` uses one `Name: value` per line.
-- Empty lines and lines starting with `#` are ignored.
-- If the same header name appears more than once, later values win.
-- Precedence is `TB_HEADERS`, then repeated `--header` flags.
+It returns the resolved ACL name, admin flag, and effective allow/deny rules.
 
-Example with multiple headers:
+ACL and PSK management methods are admin-only when auth is enabled:
 
-```bash
-export TB_HEADERS="$(cat <<'EOF'
-# accepted by the front-end proxy
-Authorization: Bearer YOUR_TOKEN
-X-Org: docs
-EOF
-)"
+- `acl_list`
+- `acl_get`
+- `acl_put`
+- `acl_destroy`
+- `psk_list`
+- `psk_create`
+- `psk_destroy`
 
-tb -u https://tabularium.example.com search roadmap
-tb -u https://tabularium.example.com chat /rooms/ops.md -i Logis
-```
+When auth is disabled, those management methods are open.
 
-The same header set is used for WebSocket-based commands too, so proxy-protected chat flows work without a separate configuration knob. Mercifully, one less shrine to maintain.
+If operators delete the last admin ACL, recovery is intentionally blunt:
 
-## Recommendation
+1. disable auth in `config.toml`
+2. restart the server
+3. recreate an admin ACL and PSK
+4. re-enable auth
 
-For anything outside local development:
+## HTTP and JSON-RPC failure semantics
 
-- do not expose a raw unauthenticated Tabularium server to the public internet
+REST / web / WebSocket / MCP HTTP:
+
+- missing or unknown credential: `401 Unauthorized`
+- known credential but ACL denies the action: `403 Forbidden`
+
+JSON-RPC:
+
+- missing or unknown credential: `-32001`
+- known credential but ACL denies the action: `-32004`
+
+List and search results are filtered before they are returned. Direct path
+operations are rejected as soon as the target path is known. For directory
+listings, Tabularium does not require direct read access on the listed parent
+directory when a narrower ACL still exposes some children beneath it.
+
+## Recommended deployment stance
+
+Even with built-in auth, the sensible deployment shape is still:
+
+- keep Tabularium on a private network or trusted host
 - terminate TLS at your proxy or gateway
-- enforce authentication and authorization there
-- pass only the headers Tabularium or your surrounding infrastructure actually needs
-- prefer `TB_HEADERS` over `--header` when credentials are sensitive
+- expose `X-JWT-Assertion` only in deployments where a trusted upstream mints it
+- use `X-Auth-Key` for direct operator/API access when that simpler model fits
+- prefer `tb -k` for PSKs and `TB_HEADERS` / `--header` for custom assertion
+  headers
+
+If you are exposing a public-facing service, the external control plane should
+still do the heavy lifting. Tabularium's built-in auth is real, but it is not a
+substitute for perimeter sanity.

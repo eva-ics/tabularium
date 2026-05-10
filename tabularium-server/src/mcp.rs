@@ -24,12 +24,12 @@ use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-use crate::auth::{RequestAuth, resolve_request_auth};
+use crate::auth::{RequestAuth, resolve_request_auth_arc};
 use crate::web::{AppState, RpcAppError, dispatch_app_rpc};
 
 const MCP_HELP_BASE: &str = include_str!("../res/mcp/help.txt");
 
-const TOOL_NAMES_LINE: &str = "Call tool `methods` for the live catalog; the registered set depends on config `mcp.full` (destructive tools are omitted unless full mode is enabled).";
+const TOOL_NAMES_LINE: &str = "Call tool `methods` for the live catalog; the registered set depends on config `mcp.full` (destructive tools, ACL/PSK admin tools, and `whoami` are omitted unless full mode is enabled).";
 
 /// JSON-RPC / MCP tool names stripped when `mcp.full` is false. Each name must match a `#[tool]` on [`TabulariumMcp`].
 const MCP_FULL_ONLY_TOOL_NAMES: &[&str] = &[
@@ -42,9 +42,30 @@ const MCP_FULL_ONLY_TOOL_NAMES: &[&str] = &[
     "reindex",
 ];
 
+/// Identity / ACL / PSK MCP tools — same gate as destructive ops (`mcp.full`).
+const MCP_FULL_ONLY_ACL_PSK_TOOL_NAMES: &[&str] = &[
+    "whoami",
+    "acl_list",
+    "acl_get",
+    "acl_put",
+    "acl_destroy",
+    "psk_list",
+    "psk_create",
+    "psk_destroy",
+];
+
 const MCP_METHODS_CATALOG_FULL: &str = r#"
 
 **mcp.full = true only (trusted / private deployments):**
+
+whoami — (no params) Resolved ACL JSON for the caller.
+acl_list — (no params) List ACL name + body rows (admin when auth on).
+acl_get — name (string).
+acl_put — name, body (validated ACL JSON string).
+acl_destroy — name (string).
+psk_list — (no params).
+psk_create — name (PSK handle), acl_name (string). Response includes the raw key string — use it as **`X-Auth-Key`** for authenticated MCP/RPC calls.
+psk_destroy — name (PSK handle).
 
 delete_document — path (JSON-RPC delete_document).
 delete_directory — path, recursive optional (default false).
@@ -56,6 +77,8 @@ reindex — path optional (omit or `/` for full rebuild; subtree otherwise).
 "#;
 
 const MCP_METHODS_CATALOG: &str = r#"MCP tools (parameters mirror POST /rpc JSON objects).
+
+Auth: when **`[server].authenticate = true`**, attach **`X-Auth-Key: <psk>`** on MCP HTTP requests (same as REST/`POST /rpc`), unless your proxy injects the configured OIDC assertion header. Mint keys with **`psk_create`** when **`mcp.full = true`** and admin ACL allows.
 
 Doctrine: **list_directory** (repeated) = tree walk / "find by listing" — locate entries by path and name; **search** = indexed full-text across document bodies; **grep** = regex lines in one file only.
 
@@ -82,17 +105,7 @@ slice — path, start_line/end_line or from_line/to_line aliases (1-based inclus
 grep — path, pattern, max_matches optional (0 = unlimited), invert_match optional (default false). Line-level regex within that single document; not repo-wide search.
 wait — path (long-poll until document changes or server timeout).
 
-**ACL / PSK (same semantics as POST /rpc; send `X-Auth-Key` when `[mcp].authenticate=true`):**
-whoami — (no params) Resolved ACL JSON for the caller.
-acl_list — (no params) List ACL name + body rows (admin when auth on).
-acl_get — name (string).
-acl_put — name, body (validated ACL JSON string).
-acl_destroy — name (string).
-psk_list — (no params).
-psk_create — name (PSK handle), acl_name (string).
-psk_destroy — name (PSK handle).
-
-When `mcp.full = true` in server config, destructive tools are also registered — see suffix in tool `methods` output.
+When `mcp.full = true` in server config, destructive tools plus identity / ACL / PSK admin tools (`whoami`, `acl_*`, `psk_*`) are also registered — see suffix in tool `methods` output. Otherwise use CLI or REST for those rites.
 "#;
 
 #[derive(Clone)]
@@ -140,6 +153,9 @@ impl TabulariumMcp {
             for name in MCP_FULL_ONLY_TOOL_NAMES {
                 tool_router.remove_route(name);
             }
+            for name in MCP_FULL_ONLY_ACL_PSK_TOOL_NAMES {
+                tool_router.remove_route(name);
+            }
         }
         Self {
             app,
@@ -160,12 +176,13 @@ impl TabulariumMcp {
         method: &str,
         params: Value,
     ) -> Result<String, String> {
-        let mcp_destructive = MCP_FULL_ONLY_TOOL_NAMES.contains(&method);
+        let mcp_full_only_tool = MCP_FULL_ONLY_TOOL_NAMES.contains(&method)
+            || MCP_FULL_ONLY_ACL_PSK_TOOL_NAMES.contains(&method);
         info!(
             target: "tabularium_server::rpc",
             transport = "mcp",
             mcp_full = self.mcp_full,
-            mcp_destructive,
+            mcp_full_only_tool,
             method = %method,
             params = %crate::rpc_preview::format_rpc_params_preview(Some(&params)),
             "RPC request"
@@ -175,7 +192,14 @@ impl TabulariumMcp {
         } else if method == "test" {
             RequestAuth::Disabled
         } else {
-            match resolve_request_auth(self.app.db.as_ref(), true, &parts.headers).await {
+            match resolve_request_auth_arc(
+                self.app.db.as_ref(),
+                true,
+                &parts.headers,
+                self.app.oidc.as_ref(),
+            )
+            .await
+            {
                 Ok(a) => a,
                 Err(e) => return Err(e.to_string()),
             }
@@ -732,7 +756,7 @@ impl TabulariumMcp {
     }
 
     #[tool(
-        description = "Resolved ACL identity JSON (`whoami` RPC). Valid `X-Auth-Key` required when `[mcp].authenticate=true`."
+        description = "Resolved ACL identity JSON (`whoami` RPC). **Registered only when `mcp.full = true` in server config.** Valid `X-Auth-Key` or assertion header required when `[mcp].authenticate=true`."
     )]
     async fn whoami(
         &self,
@@ -743,7 +767,7 @@ impl TabulariumMcp {
     }
 
     #[tool(
-        description = "List ACL definitions (`acl_list`). Admin ACL required when `[mcp].authenticate=true`."
+        description = "List ACL definitions (`acl_list`). **Registered only when `mcp.full = true`.** Admin ACL required when `[mcp].authenticate=true`."
     )]
     async fn acl_list(
         &self,
@@ -753,7 +777,9 @@ impl TabulariumMcp {
         self.call_rpc_json(&parts, "acl_list", json!({})).await
     }
 
-    #[tool(description = "Fetch one ACL body JSON (`acl_get`). Admin when auth on.")]
+    #[tool(
+        description = "Fetch one ACL body JSON (`acl_get`). **Registered only when `mcp.full = true`.** Admin when auth on."
+    )]
     async fn acl_get(
         &self,
         Extension(parts): Extension<Parts>,
@@ -764,7 +790,7 @@ impl TabulariumMcp {
     }
 
     #[tool(
-        description = "Upsert ACL (`acl_put`); body must be valid ACL JSON. Admin when auth on."
+        description = "Upsert ACL (`acl_put`); body must be valid ACL JSON. **Registered only when `mcp.full = true`.** Admin when auth on."
     )]
     async fn acl_put(
         &self,
@@ -775,7 +801,9 @@ impl TabulariumMcp {
             .await
     }
 
-    #[tool(description = "Delete ACL and cascade keys (`acl_destroy`). Admin when auth on.")]
+    #[tool(
+        description = "Delete ACL and cascade keys (`acl_destroy`). **Registered only when `mcp.full = true`.** Admin when auth on."
+    )]
     async fn acl_destroy(
         &self,
         Extension(parts): Extension<Parts>,
@@ -785,7 +813,9 @@ impl TabulariumMcp {
             .await
     }
 
-    #[tool(description = "List PSK rows (`psk_list`). Admin when auth on.")]
+    #[tool(
+        description = "List PSK rows (`psk_list`). **Registered only when `mcp.full = true`.** Admin when auth on. Requires `X-Auth-Key` or assertion when `[mcp].authenticate=true`."
+    )]
     async fn psk_list(
         &self,
         Extension(parts): Extension<Parts>,
@@ -794,7 +824,9 @@ impl TabulariumMcp {
         self.call_rpc_json(&parts, "psk_list", json!({})).await
     }
 
-    #[tool(description = "Create PSK for ACL (`psk_create`). Admin when auth on.")]
+    #[tool(
+        description = "Create PSK for ACL (`psk_create`). **Registered only when `mcp.full = true`.** Admin when auth on. Returns the new key — store as `X-Auth-Key` for subsequent MCP/RPC requests when server auth is enabled."
+    )]
     async fn psk_create(
         &self,
         Extension(parts): Extension<Parts>,
@@ -808,7 +840,9 @@ impl TabulariumMcp {
         .await
     }
 
-    #[tool(description = "Delete PSK (`psk_destroy`). Admin when auth on.")]
+    #[tool(
+        description = "Delete PSK (`psk_destroy`). **Registered only when `mcp.full = true`.** Admin when auth on. Requires `X-Auth-Key` or assertion when `[mcp].authenticate=true`."
+    )]
     async fn psk_destroy(
         &self,
         Extension(parts): Extension<Parts>,
@@ -935,9 +969,9 @@ impl TabulariumMcp {
 impl ServerHandler for TabulariumMcp {
     fn get_info(&self) -> ServerInfo {
         let instructions = if self.mcp_full {
-            "Tabularium MCP — **trusted FULL mode**. Same JSON-RPC semantics and authentication as POST /rpc (no alternate permission model). Includes destructive tools: delete_document, delete_directory, rename_document, rename_directory, move_document, move_directory, reindex — plus the standard librarium surface. **Private / operator-controlled deployments only.**"
+            "Tabularium MCP — **trusted FULL mode**. Same JSON-RPC semantics and authentication as POST /rpc (no alternate permission model). Includes destructive tools, identity (`whoami`), and ACL/PSK admin tools — plus the standard librarium surface. **Private / operator-controlled deployments only.**"
         } else {
-            "Tabularium MCP — fs-like librarium for machine spirits. Three rites: list_directory (tree walk / find-by-listing, rows carry modified_at), search (indexed full-text across bodies, file names, descriptions), grep (regex lines in one file). say_document for meetings (`from_id` = sender nickname). append_document is not for chat blocks. Destructive tools (delete/move/rename/reindex) are not registered unless `mcp.full = true` in server config; otherwise use CLI or REST."
+            "Tabularium MCP — fs-like librarium for machine spirits. Three rites: list_directory (tree walk / find-by-listing, rows carry modified_at), search (indexed full-text across bodies, file names, descriptions), grep (regex lines in one file). say_document for meetings (`from_id` = sender nickname). append_document is not for chat blocks. Destructive tools and ACL/PSK/`whoami` MCP tools are not registered unless `mcp.full = true` in server config; otherwise use CLI or REST."
         };
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_instructions(instructions)

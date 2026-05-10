@@ -295,6 +295,16 @@ impl SqliteStorage {
         Ok(row)
     }
 
+    #[instrument(name = "sqlite_auth_lookup_acl_named", skip(self, name), err(Debug))]
+    pub async fn auth_lookup_acl_named(&self, name: &str) -> Result<Option<(String, String)>> {
+        let row: Option<(String, String)> =
+            sqlx::query_as("SELECT name, body_json FROM acls WHERE name = ?")
+                .bind(name)
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(row)
+    }
+
     #[instrument(name = "sqlite_psk_list", skip(self), err(Debug))]
     pub async fn psk_list_rows(&self) -> Result<Vec<(String, String, String)>> {
         let rows: Vec<(String, String, String)> = sqlx::query_as(

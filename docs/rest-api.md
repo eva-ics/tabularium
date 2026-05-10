@@ -2,6 +2,39 @@
 
 Base path: `/api`. Document tree: **`/api/doc`**. `GET /api/doc` lists **root-level** entries (files and directories); deeper paths use additional URL segments (names or numeric ids).
 
+## Authentication
+
+When `[server].authenticate = true`, REST uses the same built-in auth rules as
+the web UI, `/ws`, and `POST /rpc`:
+
+- default credential header: `X-Auth-Key`
+- optional upstream assertion header from `[oidc].header` (`X-JWT-Assertion` by
+  default)
+- if the assertion header is present, REST validates it and fails closed on
+  error; no PSK fallback
+- if the assertion header is absent, REST falls back to `X-Auth-Key`
+
+Health probe:
+
+- `GET /api/test` stays open even when auth is enabled
+
+Identity probe:
+
+- `GET /api/whoami` requires the same auth as the rest of the protected API and
+  returns the resolved ACL / permission view for the caller
+
+Failure semantics:
+
+- `401 Unauthorized` — missing or unknown credential
+- `403 Forbidden` — known credential, but ACL denies the action
+
+Directory listings and search results are filtered before they are returned.
+
+## Introspection
+
+- `GET /api/test` — JSON `{ product_name, product_version, uptime, authenticate_api }`
+- `GET /api/whoami` — JSON `{ acl, admin, permissions }`
+
 ## Document tree (`/api/doc`)
 
 - `GET /api/doc` — JSON array: `id`, `kind`, `name`, `description`, timestamps, `size_bytes`, `recursive_file_count` (same shape as JSON-RPC `list_directory` at `/`).
@@ -25,4 +58,5 @@ Path segments under `/api/doc/…` accept **name** or **numeric id** per segment
 
 Response: JSON array of `{ document_id, path, snippet, score, line_number? }`.
 
-Errors: JSON `{ "error": "message" }` with `400` / `404` / `409` / `500` as appropriate.
+Errors: JSON `{ "error": "message" }` with `400`, `401`, `403`, `404`, `409`,
+or `500` as appropriate.

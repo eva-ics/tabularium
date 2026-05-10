@@ -503,6 +503,19 @@ export function EntriesView() {
     () => false,
   );
 
+  // Deep-link / refresh: `?open=` must show the preview stack on narrow viewports.
+  useEffect(() => {
+    if (!isMobile) {
+      return;
+    }
+    const p = openDocPath?.trim() ?? "";
+    if (p.length === 0) {
+      return;
+    }
+    setMobilePanel("preview");
+    setFocusPane("preview");
+  }, [isMobile, openDocPath]);
+
   useEffect(() => {
     if (
       pendingSearchRestore.current != null ||
@@ -679,12 +692,13 @@ export function EntriesView() {
     }
   }, [firedQuery]);
 
-  const clearOpen = useCallback(() => {
+  const clearOpen = useCallback((): boolean => {
     if (!confirmDiscardIfNeeded()) {
-      return;
+      return false;
     }
     setPreviewHighlightQuery(null);
     setOpenPath(null);
+    return true;
   }, [confirmDiscardIfNeeded, setOpenPath]);
 
   const focusSearchResults = useCallback(() => {
@@ -1107,16 +1121,22 @@ export function EntriesView() {
     onEscape: () => {
       if (searchModeUi) {
         if (focusPane === "preview") {
-          clearOpen();
-          focusSearchResults();
+          if (clearOpen()) {
+            focusSearchResults();
+            if (isMobile) {
+              setMobilePanel("entries");
+            }
+          }
           return;
         }
         exitSearchSession();
         return;
       }
       if (isMobile && mobilePanel === "preview") {
-        setMobilePanel("entries");
-        setFocusPane("tree");
+        if (clearOpen()) {
+          setMobilePanel("entries");
+          setFocusPane("tree");
+        }
         return;
       }
       clearOpen();
@@ -1184,8 +1204,10 @@ export function EntriesView() {
       }
       searchSessionRef.current = false;
       if (isMobile && mobilePanel === "preview") {
-        setMobilePanel("entries");
-        setFocusPane("tree");
+        if (clearOpen()) {
+          setMobilePanel("entries");
+          setFocusPane("tree");
+        }
         return;
       }
       clearOpen();
@@ -1652,8 +1674,10 @@ export function EntriesView() {
                 data-print-hide
                 data-testid="mobile-back"
                 onClick={() => {
-                  setMobilePanel("entries");
-                  setFocusPane("tree");
+                  if (clearOpen()) {
+                    setMobilePanel("entries");
+                    setFocusPane("tree");
+                  }
                 }}
               >
                 ← Back

@@ -2,9 +2,11 @@ Tabularium MCP — a filesystem-shaped librarium for machine spirits.
 
 Use it as the shared knowledge base per request: task scrolls, meetings, runbooks, and spirit-to-spirit doctrine — unless your overseer specifies another store.
 
-This server speaks the same JSON-RPC vocabulary as POST /rpc (see tool `methods` for parameters). By default, destructive operations (delete/move/rename directory or document, reindex) are **not** registered as MCP tools. Set **`mcp.full = true`** in server config only on a **trusted private** Tabularium host to expose those tools through MCP; otherwise use CLI or REST with proper rites.
+This server speaks the same JSON-RPC vocabulary as POST /rpc (see tool `methods` for parameters). By default, destructive operations (delete/move/rename directory or document, reindex), identity (**`whoami`**), and ACL/PSK admin tools (**`acl_*`**, **`psk_*`**) are **not** registered as MCP tools. Set **`mcp.full = true`** in server config only on a **trusted private** Tabularium host to expose those tools through MCP; otherwise use CLI or REST with proper rites.
 
-When **`[mcp].authenticate = true`**, send **`X-Auth-Key`** with MCP requests; ACL admin management uses **`whoami`**, **`acl_*`**, and **`psk_*`** tools mirroring POST `/rpc`.
+**Credentials (`X-Auth-Key`).** When **`[server].authenticate = true`**, every HTTP call to Tabularium (REST, **`POST /rpc`**, MCP streamable HTTP) must carry auth the server accepts: typically **`X-Auth-Key: <psk>`** with a key minted via **`psk_create`** (or another admin path), **or**, when **`[oidc]`** is configured, the configured assertion header with a valid JWT. MCP clients cannot rely on browser cookies — configure the MCP transport to attach **`X-Auth-Key`** on each tool request whenever the forge is not fronted by a WAF that injects the assertion for you. **`[mcp].authenticate = true`** gates the MCP route the same way; **`whoami`**, **`acl_*`**, and **`psk_*`** (when **`mcp.full = true`**) need the same headers as **`POST /rpc`**.
+
+When **`[mcp].authenticate = true`** and **`mcp.full = true`**, send **`X-Auth-Key`** or your WAF assertion header with MCP requests for authenticated tools; ACL admin uses **`whoami`**, **`acl_*`**, and **`psk_*`** mirroring POST `/rpc`.
 
 **Doctrine — three rites, do not confuse them:** **find** (tree walk) = locate files and directories by path or name in the tree, using repeated **`list_directory`** calls — there is no separate MCP “find” tool. **search** = indexed full-text across **all document bodies** (Tantivy). **grep** = regex line matches **inside one document** only.
 

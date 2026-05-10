@@ -26,6 +26,7 @@ async fn test_app() -> (AppState, tempfile::TempDir) {
         process_started_at: Monotonic::now(),
         authenticate_api: false,
         authenticate_mcp: false,
+        oidc: None,
     };
     (app, dir)
 }
@@ -39,9 +40,9 @@ async fn mcp_full_false_omits_destructive_tools() {
     assert!(mcp.has_mcp_tool("get_document"));
     assert!(mcp.has_mcp_tool("list_directory"));
     assert!(mcp.has_mcp_tool("append_if_not_contains"));
-    assert!(mcp.has_mcp_tool("whoami"));
-    assert!(mcp.has_mcp_tool("acl_list"));
-    assert!(mcp.has_mcp_tool("psk_create"));
+    assert!(!mcp.has_mcp_tool("whoami"));
+    assert!(!mcp.has_mcp_tool("acl_list"));
+    assert!(!mcp.has_mcp_tool("psk_create"));
 }
 
 #[tokio::test]
@@ -55,4 +56,8 @@ async fn mcp_full_true_registers_destructive_tools() {
     assert!(mcp.has_mcp_tool("move_document"));
     assert!(mcp.has_mcp_tool("move_directory"));
     assert!(mcp.has_mcp_tool("reindex"));
+    assert!(mcp.has_mcp_tool("whoami"));
+    assert!(mcp.has_mcp_tool("acl_list"));
+    assert!(mcp.has_mcp_tool("acl_destroy"));
+    assert!(mcp.has_mcp_tool("psk_destroy"));
 }

@@ -696,6 +696,8 @@ pub struct ServerTest {
     uptime: u64,
     #[serde(default)]
     authenticate_api: bool,
+    #[serde(default)]
+    oidc_enabled: bool,
 }
 
 impl ServerTest {
@@ -715,6 +717,11 @@ impl ServerTest {
     /// When true, REST and JSON-RPC expect `X-Auth-Key` (stage-1 ACL).
     pub fn authenticate_api(&self) -> bool {
         self.authenticate_api
+    }
+
+    /// When true, `[oidc]` is configured — assertion/JWKS auth path is active (see server docs).
+    pub fn oidc_enabled(&self) -> bool {
+        self.oidc_enabled
     }
 }
 

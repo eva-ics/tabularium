@@ -51,7 +51,7 @@ export function AppShell() {
           >
             Stats
           </NavLink>
-          {trustedAuth?.authenticateApi ? (
+          {trustedAuth?.authenticateApi && !trustedAuth.oidcAssertionAuth ? (
             <button
               type="button"
               className={styles.navBtn}

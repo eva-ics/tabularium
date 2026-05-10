@@ -167,12 +167,19 @@ async fn run(cfg: config::Config) -> Result<(), Box<dyn std::error::Error + Send
     let db_uri = format!("sqlite://{}", cfg.server.database_path.display());
     let db = Arc::new(tabularium::SqliteDatabase::init(&db_uri, &cfg.server.index_dir, 256).await?);
     let wait_timeout = Duration::from_secs(cfg.server.timeout.max(1));
+    let oidc = match cfg.oidc.as_ref() {
+        None => None,
+        Some(sec) => Some(std::sync::Arc::new(
+            tabularium_server::jwt_assertion::AssertionRuntime::bootstrap(sec.clone()).await?,
+        )),
+    };
     let app_state = web::AppState {
         db,
         wait_timeout,
         process_started_at,
         authenticate_api: cfg.server.authenticate,
-        authenticate_mcp: cfg.mcp.as_ref().map(|m| m.authenticate).unwrap_or(false),
+        authenticate_mcp: cfg.mcp.as_ref().is_some_and(|m| m.authenticate),
+        oidc,
     };
     let app = web::router(app_state.clone());
 

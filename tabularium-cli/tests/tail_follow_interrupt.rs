@@ -29,6 +29,7 @@ async fn spawn_test_server() -> TestServer {
         process_started_at: Monotonic::now(),
         authenticate_api: false,
         authenticate_mcp: false,
+        oidc: None,
     });
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

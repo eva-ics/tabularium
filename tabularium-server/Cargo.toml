@@ -32,15 +32,19 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_urlencoded = "0.7"
 tabularium = { path = "../tabularium", default-features = false, features = ["db"] }
-tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal"] }
+tokio = { version = "1", features = ["fs", "macros", "net", "rt-multi-thread", "signal", "time"] }
 tokio-util = { version = "0.7" }
 toml = "0.8"
 tracing = "0.1"
 uuid = "1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 urlencoding = "2"
+jsonwebtoken = { version = "10.3.0", default-features = false, features = ["rust_crypto", "use_pem"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+parking_lot = "0.12.5"
 
 [dev-dependencies]
+base64 = "0.22.1"
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
 serde_json = "1"

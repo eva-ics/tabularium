@@ -4,6 +4,8 @@ import { createContext, useContext } from "react";
 export interface TabulariumTrustedAuthValue {
   /** True when the server requires API keys — otherwise no PSK chrome. */
   authenticateApi: boolean;
+  /** `[oidc]` on server — Web UI skips PSK gate (proxy supplies JWT assertion). */
+  oidcAssertionAuth: boolean;
   /** Clears cookie + session PSK and returns to the gate — the Emperor revokes this seal. */
   logoutPskSession: () => void;
 }

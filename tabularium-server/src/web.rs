@@ -14,9 +14,10 @@ use serde_json::{Map, Value, json};
 use tracing::info;
 
 use crate::auth::{
-    RequestAuth, check_read, check_write, filter_listed_children, require_mgmt_admin,
-    resolve_request_auth, whoami_json,
+    RequestAuth, check_read, check_write, directory_listing_requires_parent_readable,
+    filter_listed_children, require_mgmt_admin, resolve_request_auth_arc, whoami_json,
 };
+use crate::jwt_assertion::AssertionRuntime;
 use crate::test_payload::test_payload;
 use crate::ws_doc::ws_upgrade;
 use tabularium::jsonrpc_codes::{FORBIDDEN, UNAUTHORIZED};
@@ -49,6 +50,8 @@ pub struct AppState {
     pub authenticate_api: bool,
     /// MCP streamable HTTP (same `AppState`).
     pub authenticate_mcp: bool,
+    /// Optional `[oidc]` upstream JWT assertion verifier (JWKS).
+    pub oidc: Option<Arc<AssertionRuntime>>,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -76,6 +79,7 @@ async fn api_test(State(st): State<AppState>) -> ApiResult<Json<Value>> {
     Ok(Json(test_payload(
         st.process_started_at,
         st.authenticate_api,
+        st.oidc.is_some(),
     )))
 }
 
@@ -88,7 +92,7 @@ async fn api_resolve_auth(st: &AppState, headers: &HeaderMap) -> Result<RequestA
     Ok(if !st.authenticate_api {
         RequestAuth::Disabled
     } else {
-        resolve_request_auth(st.db.as_ref(), true, headers)
+        resolve_request_auth_arc(st.db.as_ref(), true, headers, st.oidc.as_ref())
             .await
             .map_err(ApiError)?
     })
@@ -282,7 +286,9 @@ async fn list_directory_inner(
     dir_path: &str,
     auth: &RequestAuth,
 ) -> ApiResult<Json<Value>> {
-    check_read(auth, dir_path).map_err(ApiError)?;
+    if directory_listing_requires_parent_readable(auth, dir_path) {
+        check_read(auth, dir_path).map_err(ApiError)?;
+    }
     let rows = st.db.list_directory(dir_path).await?;
     let rows = filter_listed_children(auth, dir_path, rows);
     let v: Vec<Value> = rows
@@ -612,7 +618,7 @@ async fn rpc_dispatch(State(st): State<AppState>, headers: HeaderMap, body: Byte
         // Uptime rite stays callable so the machine-spirits can probe the Throne without a key.
         Ok(RequestAuth::Disabled)
     } else {
-        resolve_request_auth(st.db.as_ref(), true, &headers).await
+        resolve_request_auth_arc(st.db.as_ref(), true, &headers, st.oidc.as_ref()).await
     };
     let auth = match auth_result {
         Ok(a) => a,
@@ -806,7 +812,9 @@ pub(crate) async fn dispatch_app_rpc(
         "list_directory" => {
             let p = list_directory_rpc_path(&m)?;
             canonical_path_segments(&p)?;
-            check_read(auth, &p).map_err(RpcAppError::Other)?;
+            if directory_listing_requires_parent_readable(auth, &p) {
+                check_read(auth, &p).map_err(RpcAppError::Other)?;
+            }
             let rows = st.db.list_directory(&p).await?;
             let rows = filter_listed_children(auth, &p, rows);
             let v: Vec<Value> = rows
@@ -879,7 +887,9 @@ pub(crate) async fn dispatch_app_rpc(
         "list_documents" => {
             let p = rpc_path(&m, "path")?;
             canonical_path_segments(&p)?;
-            check_read(auth, &p).map_err(RpcAppError::Other)?;
+            if directory_listing_requires_parent_readable(auth, &p) {
+                check_read(auth, &p).map_err(RpcAppError::Other)?;
+            }
             let rows = st.db.list_directory(&p).await?;
             let rows = filter_listed_children(auth, &p, rows);
             let v: Vec<Value> = rows
@@ -1143,8 +1153,12 @@ pub(crate) async fn dispatch_app_rpc(
         }
         "exists" => {
             let path = rpc_path(&m, "path")?;
-            check_read(auth, &path).map_err(RpcAppError::Other)?;
             let ex = st.db.document_exists_at_path(&path).await?;
+            if ex {
+                check_read(auth, &path).map_err(RpcAppError::Other)?;
+            } else if directory_listing_requires_parent_readable(auth, &path) {
+                check_read(auth, &path).map_err(RpcAppError::Other)?;
+            }
             Ok(json!(ex))
         }
         "search" => {
@@ -1275,7 +1289,11 @@ pub(crate) async fn dispatch_app_rpc(
                     "test: no parameters allowed".into(),
                 )));
             }
-            Ok(test_payload(st.process_started_at, st.authenticate_api))
+            Ok(test_payload(
+                st.process_started_at,
+                st.authenticate_api,
+                st.oidc.is_some(),
+            ))
         }
         "whoami" => {
             if !m.is_empty() {

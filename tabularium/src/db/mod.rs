@@ -143,6 +143,14 @@ impl SqliteDatabase {
         Ok(Some(AuthContext::new(name, body)))
     }
 
+    pub async fn resolve_acl_named(&self, name: &str) -> Result<Option<AuthContext>> {
+        let Some((name, json)) = self.storage.auth_lookup_acl_named(name).await? else {
+            return Ok(None);
+        };
+        let body = crate::parse_acl_json(&json)?;
+        Ok(Some(AuthContext::new(name, body)))
+    }
+
     pub async fn psk_list_rows(&self) -> Result<Vec<(String, String, String)>> {
         self.storage.psk_list_rows().await
     }

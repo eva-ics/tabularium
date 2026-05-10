@@ -23,6 +23,7 @@ async fn unknown_rpc_method_returns_minus_32601() {
         process_started_at: Monotonic::now(),
         authenticate_api: false,
         authenticate_mcp: false,
+        oidc: None,
     });
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -70,6 +71,7 @@ async fn invalid_rpc_params_return_minus_32602() {
         process_started_at: Monotonic::now(),
         authenticate_api: false,
         authenticate_mcp: false,
+        oidc: None,
     });
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -112,6 +114,7 @@ async fn rpc_duplicate_create_document_returns_duplicate_resource_code() {
         process_started_at: Monotonic::now(),
         authenticate_api: false,
         authenticate_mcp: false,
+        oidc: None,
     });
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

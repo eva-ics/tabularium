@@ -34,6 +34,7 @@ pub async fn spawn_test_server_with_wait_timeout(
         process_started_at: Monotonic::now(),
         authenticate_api,
         authenticate_mcp: false,
+        oidc: None,
     });
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

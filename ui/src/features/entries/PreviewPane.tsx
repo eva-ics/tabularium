@@ -26,6 +26,7 @@ import {
   markdownRemarkPlugins,
   rehypeKatex,
 } from "../../markdown/mathMarkdown";
+import { copyTextClipboard } from "bmat/dom";
 import { parentPath } from "./entryModel";
 import { withOpenDocQuery } from "./entriesPath";
 import styles from "./PreviewPane.module.scss";
@@ -95,6 +96,7 @@ export const PreviewPane = forwardRef<HTMLDivElement, PreviewPaneProps>(
     const [saveError, setSaveError] = useState<string | null>(null);
     const [saving, setSaving] = useState(false);
     const [editLoading, setEditLoading] = useState(false);
+    const [copied, setCopied] = useState(false);
     const [editPrepareError, setEditPrepareError] = useState<string | null>(
       null,
     );
@@ -348,8 +350,25 @@ export const PreviewPane = forwardRef<HTMLDivElement, PreviewPaneProps>(
         aria-label="Document preview"
       >
         <div className={styles.header}>
-          <span className={styles.headerTitle}>
-            {pathLabel ? pathLabel : "Preview"}
+          <span className={styles.headerLeft}>
+            <span className={styles.headerTitle}>
+              {pathLabel ? pathLabel : "Preview"}
+            </span>
+            {pathLabel ? (
+              <button
+                type="button"
+                className={styles.copyPath}
+                title="Copy path"
+                onClick={() => {
+                  void copyTextClipboard(pathLabel).then(() => {
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 1500);
+                  });
+                }}
+              >
+                {copied ? "✓" : "⎘"}
+              </button>
+            ) : null}
           </span>
           {showRawToggle || showChatToggle || editMode ? (
             <div className={styles.headerActions}>
