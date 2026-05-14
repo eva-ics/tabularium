@@ -49,11 +49,18 @@ When auth is enabled and no assertion header is present, the caller must send:
 X-Auth-Key: <psk>
 ```
 
-CLI shorthand:
+CLI shorthand (`-k` / `--key` shows up in process listings and shell history; prefer env):
+
+```bash
+export TB_API_KEY=YOUR_PSK
+tb -u http://127.0.0.1:3050 whoami
+```
 
 ```bash
 tb -u http://127.0.0.1:3050 -k YOUR_PSK whoami
 ```
+
+Header precedence for `tb`: `TB_HEADERS`, then each `--header`, then `TB_API_KEY`, then `-k` / `--key` (each step can override `X-Auth-Key` and other names from the previous). `-k` wins over `TB_API_KEY` when both are set.
 
 Each PSK belongs to exactly one ACL. One ACL may have many PSKs.
 
@@ -225,8 +232,8 @@ Even with built-in auth, the sensible deployment shape is still:
 - terminate TLS at your proxy or gateway
 - expose `X-JWT-Assertion` only in deployments where a trusted upstream mints it
 - use `X-Auth-Key` for direct operator/API access when that simpler model fits
-- prefer `tb -k` for PSKs and `TB_HEADERS` / `--header` for custom assertion
-  headers
+- prefer `TB_API_KEY` (or `TB_HEADERS`) for PSKs instead of `tb -k`; use
+  `TB_HEADERS` / `--header` for custom assertion headers
 
 If you are exposing a public-facing service, the external control plane should
 still do the heavy lifting. Tabularium's built-in auth is real, but it is not a

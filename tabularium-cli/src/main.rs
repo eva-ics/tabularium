@@ -18,6 +18,15 @@ fn parse_cli_tail_mode(s: &str) -> Result<TailMode, clap::Error> {
     TailMode::parse_cli_token(s).map_err(|msg| clap::Error::raw(ErrorKind::ValueValidation, msg))
 }
 
+fn effective_auth_key(cli: &Cli) -> Option<String> {
+    cli.auth_key.clone().or_else(|| {
+        std::env::var("TB_API_KEY").ok().and_then(|s| {
+            let t = s.trim();
+            (!t.is_empty()).then(|| t.to_owned())
+        })
+    })
+}
+
 fn merged_extra_headers(cli: &Cli) -> Result<HeaderMap, String> {
     let mut map = HeaderMap::new();
     if let Ok(raw) = std::env::var("TB_HEADERS") {
@@ -37,14 +46,14 @@ fn merged_extra_headers(cli: &Cli) -> Result<HeaderMap, String> {
     name = "tb",
     version,
     about = "tabularium CLI (JSON-RPC)",
-    after_long_help = "Environment:\n  TB_HEADERS  Optional extra HTTP headers on every RPC and WebSocket request.\n              One `Name: value` per line (newline-separated); `#` starts a comment line.\n              Precedence: TB_HEADERS < repeated --header < -k/--key (later wins per header name).\n"
+    after_long_help = "Environment:\n  TB_HEADERS   Optional extra HTTP headers on every RPC and WebSocket request.\n               One `Name: value` per line (newline-separated); `#` starts a comment line.\n  TB_API_KEY   Optional PSK (same as `-k` / `--key`); avoids argv and shell history leaks (`ps` still sees env on some systems — `TB_HEADERS` can hide the name).\n               Precedence: TB_HEADERS < repeated --header < TB_API_KEY < -k/--key.\n"
 )]
 pub(crate) struct Cli {
     #[arg(short = 't', default_value_t = 5)]
     timeout_sec: u64,
     #[arg(short = 'u', default_value = "http://127.0.0.1:3050")]
     api_uri: String,
-    /// Pre-shared key sent as `X-Auth-Key` on every RPC/WebSocket request when the server requires authentication (stage-1 ACL).
+    /// Pre-shared key sent as `X-Auth-Key` on every RPC/WebSocket request when the server requires authentication (stage-1 ACL). Prefer `TB_API_KEY` to keep secrets out of argv.
     #[arg(short = 'k', long = "key", value_name = "PSK")]
     auth_key: Option<String>,
     /// Extra HTTP header on every RPC and WebSocket request (repeatable). Visible in `ps` and shell history — prefer TB_HEADERS for secrets.
@@ -299,7 +308,7 @@ pub(crate) enum Command {
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let cli = Cli::parse();
     let mut extra = merged_extra_headers(&cli)?;
-    if let Some(ref k) = cli.auth_key {
+    if let Some(ref k) = effective_auth_key(&cli) {
         let line = format!("X-Auth-Key: {}", k.trim());
         merge_header_line(&mut extra, &line).map_err(|e| e.to_string())?;
     }
