@@ -155,3 +155,13 @@ pub-www:
       ((${#files[@]})) || { echo "pub-www: www/ has no files" >&2; exit 1; }; \
       gsutil -m cp -r -a public-read www/* "$BUCKET" \
     '
+
+fuse-mount mountpoint=".fuse-mnt-test" api_uri="http://127.0.0.1:3050":
+    mkdir -p {{mountpoint}}
+    cargo run -p tabularium-fuse -- --api-uri {{api_uri}} --mountpoint {{mountpoint}}
+
+fuse-unmount mountpoint=".fuse-mnt-test":
+    diskutil unmount force {{mountpoint}}
+
+fuse-smoke-rw mountpoint="/tmp/tabularium-fuse-mnt" base="/fuse-test":
+    bash -lc 'set -euo pipefail; TS=$(date +%s); ROOT="{{mountpoint}}{{base}}"; A="$ROOT/smoke-a-$TS"; B="$ROOT/smoke-b-$TS"; mkdir -p "$A" "$B"; echo "hello fuse smoke" > "$A/a.txt"; cp "$A/a.txt" "$A/b.txt"; mv "$A/b.txt" "$B/b.txt"; mv "$A" "$ROOT/smoke-a-renamed-$TS"; cat "$B/b.txt"; rm "$B/b.txt" "$ROOT/smoke-a-renamed-$TS/a.txt"; rmdir "$B" "$ROOT/smoke-a-renamed-$TS"; echo "FUSE_SMOKE_RW_OK"'

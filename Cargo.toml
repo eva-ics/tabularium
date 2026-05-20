@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["tabularium", "tabularium-server", "tabularium-cli"]
+members = ["tabularium", "tabularium-server", "tabularium-cli", "tabularium-fuse"]
 
 [workspace.package]
 edition = "2024"
