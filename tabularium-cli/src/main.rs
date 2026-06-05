@@ -298,8 +298,21 @@ pub(crate) enum Command {
     Touch { path: String, time: Option<String> },
     /// Block until `DIR/FILE` changes (server long-poll timeout applies).
     Wait { path: String },
-    /// Byte/line/word/char counts.
-    Wc { path: String },
+    /// Line/word/byte/char counts (`-l`/`-w`/`-c`/`-m`; default GNU columns: lines, words, bytes). Final-segment glob (`/docs/*`) counts files in one directory level; `-r` walks subtrees (glob directories or a bare directory path).
+    Wc {
+        path: String,
+        #[arg(short = 'l')]
+        lines: bool,
+        #[arg(short = 'w')]
+        words: bool,
+        #[arg(short = 'c')]
+        bytes: bool,
+        #[arg(short = 'm')]
+        chars: bool,
+        /// Recursive file walk (required for bare directories; with globs, expands into matching directory subtrees).
+        #[arg(short = 'r', long = "recursive")]
+        recursive: bool,
+    },
     /// Show resolved ACL for the current key (`whoami` RPC).
     Whoami,
 }
@@ -337,7 +350,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             match execute::execute(&client, cmd, execute::ExecuteContext::Cli, None, opts).await {
                 Ok(execute::ExecuteOutcome::Ok) => {}
                 Ok(execute::ExecuteOutcome::Interrupted) => std::process::exit(130),
-                Err(e) => return Err(e),
+                Err(e) => {
+                    execute::print_cli_message(&e.to_string());
+                    std::process::exit(1);
+                }
             }
         }
     }

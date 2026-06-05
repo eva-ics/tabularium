@@ -535,10 +535,40 @@ impl Client {
         serde_json::from_value(r).map_err(|e| Error::InvalidInput(e.to_string()))
     }
 
-    /// `wc` RPC.
+    /// `wc` RPC (single-file legacy shape only).
     pub async fn document_wc(&self, path: impl AsRef<Path>) -> Result<WcRow> {
         let path = normalize_path_for_rpc(path)?;
         let params = json!({ "path": path });
+        let r = self.call("wc", params).await?;
+        serde_json::from_value(r).map_err(|e| Error::InvalidInput(e.to_string()))
+    }
+
+    /// `wc` RPC with optional metric flags, glob paths, and recursive directory walk.
+    pub async fn wc(
+        &self,
+        path: impl AsRef<Path>,
+        filter: crate::wc::WcMetricsFilter,
+        recursive: bool,
+    ) -> Result<WcResponse> {
+        let path = normalize_path_for_rpc(path)?;
+        let mut params = json!({ "path": path });
+        if let Some(obj) = params.as_object_mut() {
+            if recursive {
+                obj.insert("recursive".into(), json!(true));
+            }
+            if filter.lines {
+                obj.insert("lines".into(), json!(true));
+            }
+            if filter.words {
+                obj.insert("words".into(), json!(true));
+            }
+            if filter.bytes {
+                obj.insert("bytes".into(), json!(true));
+            }
+            if filter.chars {
+                obj.insert("chars".into(), json!(true));
+            }
+        }
         let r = self.call("wc", params).await?;
         serde_json::from_value(r).map_err(|e| Error::InvalidInput(e.to_string()))
     }
@@ -787,7 +817,7 @@ impl StatRow {
     }
 }
 
-/// `wc` RPC payload.
+/// `wc` RPC payload (single file, all metrics).
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct WcRow {
     bytes: u64,
@@ -811,6 +841,95 @@ impl WcRow {
 
     pub fn chars(&self) -> usize {
         self.chars
+    }
+}
+
+/// Partial metric row (`wc` with selective flags or batch `total`).
+#[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize)]
+pub struct WcMetrics {
+    #[serde(default)]
+    bytes: Option<u64>,
+    #[serde(default)]
+    lines: Option<usize>,
+    #[serde(default)]
+    words: Option<usize>,
+    #[serde(default)]
+    chars: Option<usize>,
+}
+
+impl WcMetrics {
+    pub fn bytes(&self) -> Option<u64> {
+        self.bytes
+    }
+
+    pub fn lines(&self) -> Option<usize> {
+        self.lines
+    }
+
+    pub fn words(&self) -> Option<usize> {
+        self.words
+    }
+
+    pub fn chars(&self) -> Option<usize> {
+        self.chars
+    }
+}
+
+/// One file row in a batch `wc` response.
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct WcFileEntry {
+    path: String,
+    #[serde(flatten)]
+    metrics: WcMetrics,
+}
+
+impl WcFileEntry {
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub fn metrics(&self) -> &WcMetrics {
+        &self.metrics
+    }
+}
+
+/// `wc` RPC response (single-file object or batch `{ files, total }`).
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct WcResponse {
+    #[serde(default)]
+    files: Option<Vec<WcFileEntry>>,
+    #[serde(default)]
+    total: Option<WcMetrics>,
+    #[serde(default)]
+    bytes: Option<u64>,
+    #[serde(default)]
+    lines: Option<usize>,
+    #[serde(default)]
+    words: Option<usize>,
+    #[serde(default)]
+    chars: Option<usize>,
+}
+
+impl WcResponse {
+    pub fn is_batch(&self) -> bool {
+        self.files.is_some()
+    }
+
+    pub fn files(&self) -> Option<&[WcFileEntry]> {
+        self.files.as_deref()
+    }
+
+    pub fn total(&self) -> Option<&WcMetrics> {
+        self.total.as_ref()
+    }
+
+    pub fn single_metrics(&self) -> WcMetrics {
+        WcMetrics {
+            bytes: self.bytes,
+            lines: self.lines,
+            words: self.words,
+            chars: self.chars,
+        }
     }
 }
 

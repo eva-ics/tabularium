@@ -19,11 +19,15 @@ pub mod acl;
 pub mod client_headers;
 #[cfg(feature = "db")]
 pub mod db;
+#[cfg(feature = "db")]
+pub mod glob_path;
 pub mod resource_path;
 #[cfg(feature = "client")]
 pub mod rpc;
 #[cfg(feature = "db")]
 pub mod text_lines;
+#[cfg(feature = "db")]
+pub mod wc;
 #[cfg(feature = "client")]
 pub mod ws;
 
@@ -49,3 +53,5 @@ pub use reqwest::header::HeaderMap;
 #[cfg(feature = "db")]
 pub use text_lines::TailMode;
 pub use validation::{validate_chat_speaker_id, validate_entity_name};
+#[cfg(feature = "db")]
+pub use wc::WcMetricsFilter;

@@ -199,3 +199,176 @@ async fn rpc_tail_plus_n_form() {
         assert_eq!(v["error"]["code"], -32602, "bad lines: {bad}");
     }
 }
+
+#[tokio::test]
+async fn rpc_wc_glob_batch_and_directory_guard() {
+    let s = spawn_test_server().await;
+    let base = &s.base_url;
+    let client = reqwest::Client::new();
+
+    let cat = "text_wc_glob_cat";
+    client
+        .post(format!("{base}/api/doc"))
+        .json(&json!({ "path": format!("/{cat}"), "description": null }))
+        .send()
+        .await
+        .unwrap();
+    for (name, body) in [("a.md", "one two\n"), ("b.md", "three\nfour")] {
+        client
+            .put(format!("{base}/api/doc/{cat}/{name}"))
+            .json(&json!({ "content": body }))
+            .send()
+            .await
+            .unwrap();
+    }
+
+    let v = rpc(
+        &client,
+        base,
+        "wc",
+        json!({ "path": format!("/{cat}/*"), "lines": true }),
+    )
+    .await;
+    let files = v["result"]["files"].as_array().unwrap();
+    assert_eq!(files.len(), 2);
+    assert_eq!(v["result"]["total"]["lines"], 3);
+
+    let v = rpc(
+        &client,
+        base,
+        "wc",
+        json!({ "path": format!("/{cat}/a.md"), "lines": true }),
+    )
+    .await;
+    assert_eq!(v["result"]["lines"], 1);
+    assert!(v["result"]["files"].is_null());
+
+    let v = rpc(&client, base, "wc", json!({ "path": format!("/{cat}") })).await;
+    let msg = v["error"]["message"].as_str().unwrap_or("");
+    assert!(msg.contains("is a directory"), "{msg}");
+    assert!(msg.contains("recursive"), "{msg}");
+}
+
+#[tokio::test]
+async fn rpc_wc_glob_single_match_returns_flat() {
+    let s = spawn_test_server().await;
+    let base = &s.base_url;
+    let client = reqwest::Client::new();
+
+    let cat = "text_wc_glob_one";
+    client
+        .post(format!("{base}/api/doc"))
+        .json(&json!({ "path": format!("/{cat}"), "description": null }))
+        .send()
+        .await
+        .unwrap();
+    client
+        .put(format!("{base}/api/doc/{cat}/solo.md"))
+        .json(&json!({ "content": "only file\n" }))
+        .send()
+        .await
+        .unwrap();
+
+    let v = rpc(
+        &client,
+        base,
+        "wc",
+        json!({ "path": format!("/{cat}/*.md"), "lines": true }),
+    )
+    .await;
+    assert_eq!(v["result"]["lines"], 1);
+    assert!(v["result"]["files"].is_null());
+}
+
+#[tokio::test]
+async fn rpc_wc_glob_dirs_only_suggests_recursive() {
+    let s = spawn_test_server().await;
+    let base = &s.base_url;
+    let client = reqwest::Client::new();
+
+    let cat = "text_wc_dirs_only";
+    client
+        .post(format!("{base}/api/doc"))
+        .json(&json!({ "path": format!("/{cat}"), "description": null }))
+        .send()
+        .await
+        .unwrap();
+    client
+        .post(format!("{base}/api/doc"))
+        .json(&json!({ "path": format!("/{cat}/inner"), "description": null }))
+        .send()
+        .await
+        .unwrap();
+
+    let v = rpc(
+        &client,
+        base,
+        "wc",
+        json!({ "path": format!("/{cat}/*"), "lines": true }),
+    )
+    .await;
+    let msg = v["error"]["message"].as_str().unwrap_or("");
+    assert!(msg.contains("recursive"), "{msg}");
+    assert!(msg.contains("director"), "{msg}");
+}
+
+#[tokio::test]
+async fn rpc_wc_recursive_glob_and_directory() {
+    let s = spawn_test_server().await;
+    let base = &s.base_url;
+    let client = reqwest::Client::new();
+
+    let cat = "text_wc_rec_cat";
+    client
+        .post(format!("{base}/api/doc"))
+        .json(&json!({ "path": format!("/{cat}"), "description": null }))
+        .send()
+        .await
+        .unwrap();
+    client
+        .post(format!("{base}/api/doc"))
+        .json(&json!({ "path": format!("/{cat}/inner"), "description": null }))
+        .send()
+        .await
+        .unwrap();
+    client
+        .put(format!("{base}/api/doc/{cat}/inner/a.md"))
+        .json(&json!({ "content": "one\n" }))
+        .send()
+        .await
+        .unwrap();
+    client
+        .put(format!("{base}/api/doc/{cat}/inner/b.md"))
+        .json(&json!({ "content": "two\nthree\n" }))
+        .send()
+        .await
+        .unwrap();
+
+    let v = rpc(
+        &client,
+        base,
+        "wc",
+        json!({
+            "path": format!("/{cat}/*"),
+            "recursive": true,
+            "lines": true,
+        }),
+    )
+    .await;
+    let files = v["result"]["files"].as_array().unwrap();
+    assert_eq!(files.len(), 2);
+    assert_eq!(v["result"]["total"]["lines"], 3);
+
+    let v = rpc(
+        &client,
+        base,
+        "wc",
+        json!({
+            "path": format!("/{cat}"),
+            "recursive": true,
+            "lines": true,
+        }),
+    )
+    .await;
+    assert_eq!(v["result"]["total"]["lines"], 3);
+}

@@ -45,6 +45,15 @@ impl WcStats {
         }
     }
 
+    pub(crate) fn from_totals(bytes: u64, lines: usize, words: usize, chars: usize) -> Self {
+        Self {
+            bytes,
+            lines,
+            words,
+            chars,
+        }
+    }
+
     pub fn bytes(&self) -> u64 {
         self.bytes
     }

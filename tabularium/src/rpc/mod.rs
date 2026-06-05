@@ -10,5 +10,5 @@ mod client;
 
 pub use client::{
     Client, CreateDocumentReply, DocumentBody, DocumentMetaRow, GrepLineRow, ListedEntryRow,
-    SearchHitRow, ServerTest, StatRow, WcRow,
+    SearchHitRow, ServerTest, StatRow, WcFileEntry, WcMetrics, WcResponse, WcRow,
 };
