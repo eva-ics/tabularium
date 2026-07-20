@@ -41,17 +41,24 @@ fn merged_extra_headers(cli: &Cli) -> Result<HeaderMap, String> {
     Ok(map)
 }
 
+fn default_api_uri() -> String {
+    std::env::var("TB_API_URI")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "http://127.0.0.1:3050".to_owned())
+}
+
 #[derive(Parser)]
 #[command(
     name = "tb",
     version,
     about = "tabularium CLI (JSON-RPC)",
-    after_long_help = "Environment:\n  TB_HEADERS   Optional extra HTTP headers on every RPC and WebSocket request.\n               One `Name: value` per line (newline-separated); `#` starts a comment line.\n  TB_API_KEY   Optional PSK (same as `-k` / `--key`); avoids argv and shell history leaks (`ps` still sees env on some systems — `TB_HEADERS` can hide the name).\n               Precedence: TB_HEADERS < repeated --header < TB_API_KEY < -k/--key.\n"
+    after_long_help = "Environment:\n  TB_API_URI   Optional default API URI for JSON-RPC requests.\n  TB_HEADERS   Optional extra HTTP headers on every RPC and WebSocket request.\n               One `Name: value` per line (newline-separated); `#` starts a comment line.\n  TB_API_KEY   Optional PSK (same as `-k` / `--key`); avoids argv and shell history leaks (`ps` still sees env on some systems — `TB_HEADERS` can hide the name).\n               Precedence: TB_HEADERS < repeated --header < TB_API_KEY < -k/--key.\n  TB_DANGER_ACCEPT_INVALID_CERTS\n               Accept invalid HTTPS certificates for RPC requests.\n"
 )]
 pub(crate) struct Cli {
     #[arg(short = 't', default_value_t = 5)]
     timeout_sec: u64,
-    #[arg(short = 'u', default_value = "http://127.0.0.1:3050")]
+    #[arg(short = 'u', default_value_t = default_api_uri())]
     api_uri: String,
     /// Pre-shared key sent as `X-Auth-Key` on every RPC/WebSocket request when the server requires authentication (stage-1 ACL). Prefer `TB_API_KEY` to keep secrets out of argv.
     #[arg(short = 'k', long = "key", value_name = "PSK")]

@@ -55,9 +55,13 @@ impl Client {
         extra_headers: HeaderMap,
     ) -> Result<Self> {
         let base = api_uri.into().trim_end_matches('/').to_string();
-        let http = reqwest::Client::builder()
+        let mut builder = reqwest::Client::builder()
             .timeout(timeout)
-            .default_headers(extra_headers.clone())
+            .default_headers(extra_headers.clone());
+        if std::env::var_os("TB_DANGER_ACCEPT_INVALID_CERTS").is_some() {
+            builder = builder.danger_accept_invalid_certs(true);
+        }
+        let http = builder
             .build()
             .map_err(|e| Error::InvalidInput(e.to_string()))?;
         Ok(Self {
