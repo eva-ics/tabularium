@@ -13,7 +13,7 @@ For machine spirits and maintainers: layout, commands, and doctrine.
 - Example config: [config.toml.example](config.toml.example) — copy to `config.toml` for a writable local path, or rely on `just run` (uses the example when `config.toml` is absent). API scrolls: [docs/json-rpc-methods.md](docs/json-rpc-methods.md), [docs/rest-api.md](docs/rest-api.md), [docs/curl-examples.md](docs/curl-examples.md).
 - Optional Python checks: [requirements-dev.txt](requirements-dev.txt), [tests/](tests/) (`pytest tests/`) — set `TABULARIUM_TEST_URL` when a server is running; for CLI tests, set `TABULARIUM_TB_BIN` or install `tb` on `PATH`.
 - **Selenium / Web UI (`@pytest.mark.webui`)**: do **not** run against `localhost` or `127.0.0.1`. Tests are skipped unless `TABULARIUM_TEST_URL` or `TABULARIUM_URL` points at host **`10.90.1.122`** (same port as the running server). Use the integration host for all Web UI browser tests; `just ci-test` binds the ephemeral server on `0.0.0.0:<port>` and sets the base URL to `http://10.90.1.122:<port>` automatically.
-- Docs: [docs/](docs/). Meetings/tasks: tabularium MCP
+- Docs: [docs/](docs/). Meetings/tasks: **`own-tb`** MCP (Cursor: `user-own-tb`). Not `batteree-tb` / `sky-tb`.
 
 ## Behaviour notes (meeting consensus)
 

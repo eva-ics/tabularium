@@ -14,10 +14,21 @@ import {
 } from "./trustedAuthContext";
 import { verifyPskWithServer } from "./verifyPsk";
 
+async function whoamiOkWithoutKey(): Promise<boolean> {
+  try {
+    const w = await fetch("/api/whoami");
+    return w.ok && w.status === 200;
+  } catch {
+    return false;
+  }
+}
+
 export function AuthShell() {
   const [phase, setPhase] = useState<"load" | "gate" | "ok">("load");
   const [authenticateApi, setAuthenticateApi] = useState(true);
   const [oidcAssertionAuth, setOidcAssertionAuth] = useState(false);
+  const [anonymousAuth, setAnonymousAuth] = useState(false);
+  const [anonymousAvailable, setAnonymousAvailable] = useState(false);
   const [gateError, setGateError] = useState<string | null>(null);
   const [gateBusy, setGateBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -40,6 +51,8 @@ export function AuthShell() {
         if (!j.authenticate_api) {
           setAuthenticateApi(false);
           setOidcAssertionAuth(false);
+          setAnonymousAuth(false);
+          setAnonymousAvailable(false);
           setPhase("ok");
           return;
         }
@@ -49,6 +62,8 @@ export function AuthShell() {
           if (cancelled) return;
           if (w.ok && w.status === 200) {
             setOidcAssertionAuth(true);
+            setAnonymousAuth(false);
+            setAnonymousAvailable(false);
             clearStoredPsk();
             setAuthHeaderProvider(() => null);
             setPhase("ok");
@@ -56,18 +71,29 @@ export function AuthShell() {
           }
         }
         setOidcAssertionAuth(false);
+
+        const anonOk = await whoamiOkWithoutKey();
+        if (cancelled) return;
+        setAnonymousAvailable(anonOk);
+
         const fromSession = sessionStorage.getItem(PSK_SESSION_STORAGE_KEY);
         if (fromSession && fromSession.trim() !== "") {
           const k = fromSession.trim();
           const v = await verifyPskWithServer(k);
           if (cancelled) return;
           if (v.ok) {
+            setAnonymousAuth(false);
             setAuthHeaderProvider(() => ({ "X-Auth-Key": k }));
             setPhase("ok");
           } else {
             clearStoredPsk();
             setAuthHeaderProvider(() => null);
-            setPhase("gate");
+            if (anonOk) {
+              setAnonymousAuth(true);
+              setPhase("ok");
+            } else {
+              setPhase("gate");
+            }
           }
           return;
         }
@@ -78,16 +104,28 @@ export function AuthShell() {
           if (cancelled) return;
           if (v.ok) {
             sessionStorage.setItem(PSK_SESSION_STORAGE_KEY, k);
+            setAnonymousAuth(false);
             setAuthHeaderProvider(() => ({ "X-Auth-Key": k }));
             setPhase("ok");
           } else {
             clearStoredPsk();
             setAuthHeaderProvider(() => null);
-            setPhase("gate");
+            if (anonOk) {
+              setAnonymousAuth(true);
+              setPhase("ok");
+            } else {
+              setPhase("gate");
+            }
           }
           return;
         }
-        setPhase("gate");
+        setAuthHeaderProvider(() => null);
+        if (anonOk) {
+          setAnonymousAuth(true);
+          setPhase("ok");
+        } else {
+          setPhase("gate");
+        }
       } catch {
         if (!cancelled) setPhase("gate");
       }
@@ -109,16 +147,39 @@ export function AuthShell() {
     clearStoredPsk();
     setAuthHeaderProvider(() => null);
     setGateError(null);
-    setPhase("gate");
+    void (async () => {
+      const anonOk = await whoamiOkWithoutKey();
+      setAnonymousAvailable(anonOk);
+      if (anonOk) {
+        setAnonymousAuth(true);
+        setPhase("ok");
+      } else {
+        setAnonymousAuth(false);
+        setPhase("gate");
+      }
+    })();
   }, [clearStoredPsk]);
+
+  const startPskLogin = useCallback(() => {
+    setGateError(null);
+    setPhase("gate");
+  }, []);
 
   const trustedCtx = useMemo<TabulariumTrustedAuthValue>(
     () => ({
       authenticateApi,
       oidcAssertionAuth,
+      anonymousAuth,
       logoutPskSession,
+      startPskLogin,
     }),
-    [authenticateApi, oidcAssertionAuth, logoutPskSession],
+    [
+      authenticateApi,
+      oidcAssertionAuth,
+      anonymousAuth,
+      logoutPskSession,
+      startPskLogin,
+    ],
   );
 
   if (phase === "load") {
@@ -154,6 +215,7 @@ export function AuthShell() {
                 sessionStorage.setItem(PSK_SESSION_STORAGE_KEY, psk);
                 if (trust) writeTrustedPskCookie(psk);
                 else clearTrustedPskCookie();
+                setAnonymousAuth(false);
                 setAuthHeaderProvider(() => ({ "X-Auth-Key": psk }));
                 setPhase("ok");
               })();
@@ -199,6 +261,22 @@ export function AuthShell() {
             >
               {gateBusy ? "…" : "Enter"}
             </button>
+            {anonymousAvailable ? (
+              <button
+                type="button"
+                className={styles.enterBtn}
+                disabled={gateBusy}
+                data-testid="psk-continue-anonymous"
+                onClick={() => {
+                  setGateError(null);
+                  setAnonymousAuth(true);
+                  setAuthHeaderProvider(() => null);
+                  setPhase("ok");
+                }}
+              >
+                Continue without key
+              </button>
+            ) : null}
           </form>
         </div>
       </div>

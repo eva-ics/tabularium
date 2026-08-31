@@ -95,6 +95,8 @@ pub struct AppState {
     pub authenticate_mcp: bool,
     /// Optional `[oidc]` upstream JWT assertion verifier (JWKS).
     pub oidc: Option<Arc<AssertionRuntime>>,
+    /// Optional `[anonymous]` path-scoped principal when credentials are absent.
+    pub anonymous: Option<tabularium::AuthContext>,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -135,9 +137,15 @@ async fn api_resolve_auth(st: &AppState, headers: &HeaderMap) -> Result<RequestA
     Ok(if !st.authenticate_api {
         RequestAuth::Disabled
     } else {
-        resolve_request_auth_arc(st.db.as_ref(), true, headers, st.oidc.as_ref())
-            .await
-            .map_err(ApiError)?
+        resolve_request_auth_arc(
+            st.db.as_ref(),
+            true,
+            headers,
+            st.oidc.as_ref(),
+            st.anonymous.as_ref(),
+        )
+        .await
+        .map_err(ApiError)?
     })
 }
 
@@ -668,7 +676,14 @@ async fn rpc_dispatch(State(st): State<AppState>, headers: HeaderMap, body: Byte
         // Uptime rite stays callable so the machine-spirits can probe the Throne without a key.
         Ok(RequestAuth::Disabled)
     } else {
-        resolve_request_auth_arc(st.db.as_ref(), true, &headers, st.oidc.as_ref()).await
+        resolve_request_auth_arc(
+            st.db.as_ref(),
+            true,
+            &headers,
+            st.oidc.as_ref(),
+            st.anonymous.as_ref(),
+        )
+        .await
     };
     let auth = match auth_result {
         Ok(a) => a,

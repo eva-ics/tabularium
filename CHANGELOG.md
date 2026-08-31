@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Adds optional `[anonymous]` path ACL: when auth is enabled and credentials are
+  absent, requests use a configured non-admin allow/deny principal. Present but
+  invalid PSK/OIDC credentials still fail closed. Web UI opens the public view
+  without a key and offers Login / Logout around PSK sessions.
+
 ## 0.1.7 - 2026-05-11
 
 Authentication, concurrency, and operator tooling release.

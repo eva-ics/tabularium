@@ -23,6 +23,17 @@ timeout = 3600
 # timeout = 10
 # group_name_prefix = "tb_"
 
+# Optional `[anonymous]` — when authenticate is true and no credentials are supplied, apply this path ACL.
+# Present-but-invalid `X-Auth-Key` / assertion still fails closed (401). `admin` must be false.
+# [anonymous]
+# admin = false
+# [anonymous.allow]
+# read = ["/wiki", "/wiki/*", "/sandbox", "/sandbox/*"]
+# write = ["/sandbox", "/sandbox/*"]
+# [anonymous.deny]
+# read = []
+# write = []
+
 # Optional MCP (streamable HTTP). Build with: cargo build -p tabularium-server --features mcp
 [mcp]
 listen = "127.0.0.1:3031"

@@ -19,6 +19,7 @@ import {
 } from "./chatNicknameCookie";
 import { type DocumentChatStatus, useDocumentChat } from "./useDocumentChat";
 import { gfmTableKatexSanitizeSchema } from "../../markdown/gfmSanitize";
+import { markdownDiagramComponents } from "../../markdown/markdownComponents";
 import {
   markdownRemarkPlugins,
   rehypeKatex,
@@ -26,6 +27,7 @@ import {
 import styles from "../entries/PreviewPane.module.scss";
 
 const NICK_CMD = /^\/nick\s+(.+)$/;
+const diagramComponents = markdownDiagramComponents();
 
 interface DocumentChatBodyProps {
   path: string;
@@ -197,6 +199,7 @@ export const DocumentChatBody = forwardRef<
             rehypeKatex,
             [rehypeSanitize, gfmTableKatexSanitizeSchema],
           ]}
+          components={diagramComponents}
         >
           {transcript}
         </ReactMarkdown>

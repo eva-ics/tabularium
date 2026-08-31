@@ -75,6 +75,7 @@ async fn spawn_oidc_authenticated_server() -> (String, Vec<u8>, &'static str, Te
         authenticate_api: true,
         authenticate_mcp: false,
         oidc: Some(oidc),
+        anonymous: None,
     });
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

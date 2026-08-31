@@ -173,6 +173,10 @@ async fn run(cfg: config::Config) -> Result<(), Box<dyn std::error::Error + Send
             tabularium_server::jwt_assertion::AssertionRuntime::bootstrap(sec.clone()).await?,
         )),
     };
+    let anonymous = cfg
+        .anonymous
+        .as_ref()
+        .map(|a| tabularium::AuthContext::new("anonymous".into(), a.body.clone()));
     let app_state = web::AppState {
         db,
         wait_timeout,
@@ -180,6 +184,7 @@ async fn run(cfg: config::Config) -> Result<(), Box<dyn std::error::Error + Send
         authenticate_api: cfg.server.authenticate,
         authenticate_mcp: cfg.mcp.as_ref().is_some_and(|m| m.authenticate),
         oidc,
+        anonymous,
     };
     let app = web::router(app_state.clone());
 

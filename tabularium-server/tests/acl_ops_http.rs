@@ -144,6 +144,7 @@ async fn spawn_acl_ops_fixture() -> AclOpsFixture {
         authenticate_api: true,
         authenticate_mcp: false,
         oidc: None,
+        anonymous: None,
     });
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

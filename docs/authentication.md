@@ -24,11 +24,12 @@ open or closed independently from the main HTTP server.
 
 ## Supported auth modes
 
-Tabularium supports two built-in credential paths:
+Tabularium supports three built-in credential paths:
 
 1. Pre-shared keys (PSKs) mapped to ACLs
 2. Optional signed assertion tokens from a trusted upstream AAA/WAF via
    `[oidc]`
+3. Optional path-scoped `[anonymous]` principal when credentials are **absent**
 
 Tabularium still does **not** provide:
 
@@ -41,9 +42,39 @@ Tabularium still does **not** provide:
 The model is intentionally smaller: one request resolves to one effective
 principal, then ACL checks happen on paths.
 
+## Anonymous path ACL
+
+When `[server].authenticate = true` (or `[mcp].authenticate = true`) and an
+optional `[anonymous]` section is configured, requests **without** credentials
+resolve to that principal instead of `401`. The body uses the same allow/deny
+shape as `acl_put`. `admin` must be `false`.
+
+```toml
+[anonymous]
+admin = false
+
+[anonymous.allow]
+read = ["/wiki", "/wiki/*", "/sandbox", "/sandbox/*"]
+write = ["/sandbox", "/sandbox/*"]
+
+[anonymous.deny]
+read = []
+write = []
+```
+
+Rules:
+
+- credentials **absent** → `Authenticated(anonymous)` when configured; else `401`
+- `X-Auth-Key` present but empty / unknown → still `401` (never falls through)
+- OIDC assertion present but invalid → still `401` (unchanged fail-closed)
+- anonymous never bypasses `require_mgmt_admin` (`acl_*`, `psk_*`, `reindex`)
+
+`[mcp].authenticate` uses the same anonymous principal as the HTTP surface.
+
 ## PSK + ACL model
 
-When auth is enabled and no assertion header is present, the caller must send:
+When auth is enabled, no assertion header is present, and `[anonymous]` is not
+configured (or credentials are supplied), the caller must send:
 
 ```http
 X-Auth-Key: <psk>

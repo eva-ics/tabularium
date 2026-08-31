@@ -51,7 +51,21 @@ export function AppShell() {
           >
             Stats
           </NavLink>
-          {trustedAuth?.authenticateApi && !trustedAuth.oidcAssertionAuth ? (
+          {trustedAuth?.authenticateApi &&
+          !trustedAuth.oidcAssertionAuth &&
+          trustedAuth.anonymousAuth ? (
+            <button
+              type="button"
+              className={styles.navBtn}
+              data-testid="top-nav-login"
+              onClick={() => trustedAuth.startPskLogin()}
+            >
+              Login
+            </button>
+          ) : null}
+          {trustedAuth?.authenticateApi &&
+          !trustedAuth.oidcAssertionAuth &&
+          !trustedAuth.anonymousAuth ? (
             <button
               type="button"
               className={styles.navBtn}

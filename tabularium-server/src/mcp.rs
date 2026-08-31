@@ -203,6 +203,7 @@ impl TabulariumMcp {
                 true,
                 &parts.headers,
                 self.app.oidc.as_ref(),
+                self.app.anonymous.as_ref(),
             )
             .await
             {

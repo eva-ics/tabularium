@@ -24,6 +24,7 @@ async fn rpc_test_returns_identity_and_uptime() {
         authenticate_api: false,
         authenticate_mcp: false,
         oidc: None,
+        anonymous: None,
     });
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -78,6 +79,7 @@ async fn rpc_test_rejects_extra_params() {
         authenticate_api: false,
         authenticate_mcp: false,
         oidc: None,
+        anonymous: None,
     });
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
