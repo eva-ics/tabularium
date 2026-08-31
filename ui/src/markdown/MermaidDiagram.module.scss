@@ -1,0 +1,39 @@
+@use "../styles/tokens" as *;
+
+.diagram {
+  margin: 0.85em 0;
+  padding: 0.75rem;
+  background: $bg-deep;
+  border: 1px solid $border;
+  border-radius: 4px;
+  overflow: auto;
+}
+
+.pending {
+  margin: 0 0 0.5rem;
+  color: $text-muted;
+  font-size: 0.85rem;
+}
+
+.svgHost {
+  display: flex;
+  justify-content: center;
+
+  :global(svg) {
+    max-width: 100%;
+    height: auto;
+  }
+}
+
+.error {
+  margin: 0.85em 0;
+  padding: 0.75rem;
+  background: $bg-deep;
+  border: 1px solid $risk;
+  border-radius: 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: $text-muted;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.85rem;
+}
