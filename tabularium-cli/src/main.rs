@@ -45,7 +45,7 @@ fn default_api_uri() -> String {
     std::env::var("TB_API_URI")
         .ok()
         .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "http://127.0.0.1:3050".to_owned())
+        .unwrap_or_else(|| "http://127.0.0.1:3050".into())
 }
 
 #[derive(Parser)]

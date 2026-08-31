@@ -862,18 +862,22 @@ pub struct WcMetrics {
 }
 
 impl WcMetrics {
+    /// Returns the byte count when present.
     pub fn bytes(&self) -> Option<u64> {
         self.bytes
     }
 
+    /// Returns the line count when present.
     pub fn lines(&self) -> Option<usize> {
         self.lines
     }
 
+    /// Returns the word count when present.
     pub fn words(&self) -> Option<usize> {
         self.words
     }
 
+    /// Returns the character count when present.
     pub fn chars(&self) -> Option<usize> {
         self.chars
     }
@@ -888,10 +892,12 @@ pub struct WcFileEntry {
 }
 
 impl WcFileEntry {
+    /// Returns the absolute document path for this row.
     pub fn path(&self) -> &str {
         &self.path
     }
 
+    /// Returns the filtered metrics for this file.
     pub fn metrics(&self) -> &WcMetrics {
         &self.metrics
     }
@@ -915,18 +921,22 @@ pub struct WcResponse {
 }
 
 impl WcResponse {
+    /// Indicates whether this response carries a multi-file `files`/`total` shape.
     pub fn is_batch(&self) -> bool {
         self.files.is_some()
     }
 
+    /// Returns per-file rows when this is a batch response.
     pub fn files(&self) -> Option<&[WcFileEntry]> {
         self.files.as_deref()
     }
 
+    /// Returns the batch total when present.
     pub fn total(&self) -> Option<&WcMetrics> {
         self.total.as_ref()
     }
 
+    /// Returns top-level metrics for a single-file response shape.
     pub fn single_metrics(&self) -> WcMetrics {
         WcMetrics {
             bytes: self.bytes,

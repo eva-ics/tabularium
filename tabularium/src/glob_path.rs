@@ -7,12 +7,16 @@ use crate::db::{Database, Storage};
 use crate::resource_path::{join_under_directory, parent_and_final_name};
 use crate::{Error, Result};
 
-/// Whether `segment` contains glob metacharacters.
+/// Indicates whether `segment` contains glob metacharacters.
 pub fn path_has_glob_metachar(segment: &str) -> bool {
     segment.chars().any(|c| matches!(c, '*' | '?' | '['))
 }
 
-/// Compile a glob that matches a single path segment name (no `/` in pattern).
+/// Compiles a glob that matches a single path segment name (no `/` in pattern).
+///
+/// # Errors
+///
+/// See the [`Error`] for details.
 pub fn compile_name_glob(pat: &str) -> Result<GlobMatcher> {
     let matcher = GlobBuilder::new(pat)
         .literal_separator(true)
@@ -22,7 +26,12 @@ pub fn compile_name_glob(pat: &str) -> Result<GlobMatcher> {
     Ok(matcher)
 }
 
-/// Split a normalized non-root path into parent directory and final segment when the final segment has glob metacharacters.
+/// Splits a normalized non-root path into parent directory and final segment when the final
+/// segment has glob metacharacters.
+///
+/// # Errors
+///
+/// See the [`Error`] for details.
 pub fn parent_and_glob_pattern(normalized_path: &str) -> Result<Option<(String, String)>> {
     if normalized_path == "/" {
         return Ok(None);
@@ -39,7 +48,11 @@ pub fn parent_and_glob_pattern(normalized_path: &str) -> Result<Option<(String, 
     Ok(Some((parent, last)))
 }
 
-/// Collect every file path under `dir_path` (depth-first, sorted siblings).
+/// Collects every file path under `dir_path` (depth-first, sorted siblings).
+///
+/// # Errors
+///
+/// See the [`Error`] for details.
 pub async fn collect_files_recursive<S: Storage>(
     db: &Database<S>,
     dir_path: &str,
@@ -57,7 +70,12 @@ pub async fn collect_files_recursive<S: Storage>(
     Ok(())
 }
 
-/// Expand final-segment glob; with `recursive`, matching directories contribute all files in their subtrees.
+/// Expands final-segment glob; with `recursive`, matching directories contribute all files in
+/// their subtrees.
+///
+/// # Errors
+///
+/// See the [`Error`] for details.
 pub async fn expand_final_segment_glob_files_opts<S: Storage>(
     db: &Database<S>,
     normalized_path: &str,
@@ -100,12 +118,21 @@ pub async fn expand_final_segment_glob_files_opts<S: Storage>(
     Ok(Some(paths))
 }
 
-/// Whether `path` resolves to an existing directory.
+/// Indicates whether `path` resolves to an existing directory.
+///
+/// # Errors
+///
+/// See the [`Error`] for details.
 pub async fn path_is_directory<S: Storage>(db: &Database<S>, path: &str) -> Result<bool> {
     Ok(db.resolve_directory_path(path).await.is_ok())
 }
 
-/// Resolve `wc` targets: glob expansion, optional recursive directory walk, or a single file path.
+/// Resolves `wc` targets: glob expansion, optional recursive directory walk, or a single file
+/// path.
+///
+/// # Errors
+///
+/// See the [`Error`] for details.
 pub async fn resolve_wc_file_paths<S: Storage>(
     db: &Database<S>,
     normalized_path: &str,

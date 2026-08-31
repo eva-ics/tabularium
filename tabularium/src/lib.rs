@@ -32,7 +32,7 @@ pub mod wc;
 pub mod ws;
 
 #[cfg(feature = "db")]
-pub use acl::{AclBodyJson, AuthContext, parse_acl_json};
+pub use acl::{AclBodyJson, AclSideJson, AuthContext, parse_acl_json};
 #[cfg(feature = "db")]
 pub use bma_ts::Timestamp;
 #[cfg(feature = "client")]

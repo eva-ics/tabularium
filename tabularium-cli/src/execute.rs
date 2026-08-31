@@ -2794,6 +2794,7 @@ mod mcd_ec_integration_tests {
             authenticate_api: false,
             authenticate_mcp: false,
             oidc: None,
+            anonymous: None,
         });
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
