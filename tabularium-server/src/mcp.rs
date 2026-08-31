@@ -1,6 +1,7 @@
 //! MCP streamable HTTP (`/mcp`) — transport glue to the same JSON-RPC semantics as [`crate::web::dispatch_app_rpc`].
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use axum::Router;
 use http::request::Parts;
@@ -22,9 +23,10 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{Instrument, field, info, info_span};
 
 use crate::auth::{RequestAuth, resolve_request_auth_arc};
+use crate::otel::{enter_active_tool, record_tool_call};
 use crate::web::{AppState, RpcAppError, dispatch_app_rpc};
 
 const MCP_HELP_BASE: &str = include_str!("../res/mcp/help.txt");
@@ -182,47 +184,80 @@ impl TabulariumMcp {
         method: &str,
         params: Value,
     ) -> Result<String, String> {
-        let mcp_full_only_tool = MCP_FULL_ONLY_TOOL_NAMES.contains(&method)
-            || MCP_FULL_ONLY_ACL_PSK_TOOL_NAMES.contains(&method);
-        info!(
-            target: "tabularium_server::rpc",
-            transport = "mcp",
-            mcp_full = self.mcp_full,
-            mcp_full_only_tool,
-            method = %method,
-            params = %crate::rpc_preview::format_rpc_params_preview(Some(&params)),
-            "RPC request"
+        let span = info_span!(
+            "mcp.tools/call",
+            otel.name = "mcp.tools/call",
+            mcp.method = method,
+            rpc.method = method,
+            mcp.tool = method,
+            otel.status_code = field::Empty,
+            error.type = field::Empty,
         );
-        let auth: RequestAuth = if !self.app.authenticate_mcp {
-            RequestAuth::Disabled
-        } else if method == "test" {
-            RequestAuth::Disabled
-        } else {
-            match resolve_request_auth_arc(
-                self.app.db.as_ref(),
-                true,
-                &parts.headers,
-                self.app.oidc.as_ref(),
-                self.app.anonymous.as_ref(),
-            )
-            .await
-            {
-                Ok(a) => a,
-                Err(e) => return Err(e.to_string()),
-            }
-        };
-        let map = params.as_object().cloned().unwrap_or_default();
-        match dispatch_app_rpc(&self.app, &auth, method, map).await {
-            Ok(v) => Ok(if v.is_null() {
-                "null".to_string()
+        async {
+            let _active = enter_active_tool(method);
+            let started = Instant::now();
+            let mcp_full_only_tool = MCP_FULL_ONLY_TOOL_NAMES.contains(&method)
+                || MCP_FULL_ONLY_ACL_PSK_TOOL_NAMES.contains(&method);
+            info!(
+                target: "tabularium_server::rpc",
+                transport = "mcp",
+                mcp_full = self.mcp_full,
+                mcp_full_only_tool,
+                method = %method,
+                params = %crate::rpc_preview::format_rpc_params_preview(Some(&params)),
+                "RPC request"
+            );
+            let auth: RequestAuth = if !self.app.authenticate_mcp {
+                RequestAuth::Disabled
+            } else if method == "test" {
+                RequestAuth::Disabled
             } else {
-                serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?
-            }),
-            Err(e) => Err(match e {
-                RpcAppError::MethodNotFound(m) => m,
-                RpcAppError::Other(err) => err.to_string(),
-            }),
+                match resolve_request_auth_arc(
+                    self.app.db.as_ref(),
+                    true,
+                    &parts.headers,
+                    self.app.oidc.as_ref(),
+                    self.app.anonymous.as_ref(),
+                )
+                .await
+                {
+                    Ok(a) => a,
+                    Err(e) => {
+                        let msg = e.to_string();
+                        tracing::Span::current().record("otel.status_code", "ERROR");
+                        tracing::Span::current().record("error.type", "auth_error");
+                        record_tool_call(method, started, false);
+                        return Err(msg);
+                    }
+                }
+            };
+            let map = params.as_object().cloned().unwrap_or_default();
+            let result = match dispatch_app_rpc(&self.app, &auth, method, map).await {
+                Ok(v) => Ok(if v.is_null() {
+                    "null".to_string()
+                } else {
+                    serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?
+                }),
+                Err(e) => Err(match e {
+                    RpcAppError::MethodNotFound(m) => m,
+                    RpcAppError::Other(err) => err.to_string(),
+                }),
+            };
+            match &result {
+                Ok(_) => {
+                    tracing::Span::current().record("otel.status_code", "OK");
+                    record_tool_call(method, started, true);
+                }
+                Err(_) => {
+                    tracing::Span::current().record("otel.status_code", "ERROR");
+                    tracing::Span::current().record("error.type", "tool_error");
+                    record_tool_call(method, started, false);
+                }
+            }
+            result
         }
+        .instrument(span)
+        .await
     }
 }
 
@@ -1026,6 +1061,24 @@ impl ServerHandler for TabulariumMcp {
         };
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_instructions(instructions)
+    }
+}
+
+impl TabulariumMcp {
+    /// In-process MCP→RPC invocation for integration tests (empty request parts, no auth headers).
+    #[doc(hidden)]
+    pub async fn invoke_rpc_for_test(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<String, String> {
+        let req = http::Request::builder()
+            .method("POST")
+            .uri("/mcp")
+            .body(())
+            .expect("test request");
+        let (parts, ()) = req.into_parts();
+        self.call_rpc_json(&parts, method, params).await
     }
 }
 

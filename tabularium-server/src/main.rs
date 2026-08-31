@@ -5,101 +5,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use clap::Parser;
+use tabularium_server::otel::{self, Telemetry};
 use tabularium_server::{config, web};
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
-use tracing_subscriber::EnvFilter;
-use tracing_subscriber::fmt;
-use tracing_subscriber::fmt::format::Format;
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
-
-/// Buffers output until newline, then writes the line with leading whitespace trimmed (for systemd logs).
-struct LineTrimWriter<W: std::io::Write> {
-    inner: W,
-    buf: Vec<u8>,
-}
-
-impl<W: std::io::Write> LineTrimWriter<W> {
-    fn new(inner: W) -> Self {
-        Self {
-            inner,
-            buf: Vec::new(),
-        }
-    }
-
-    fn flush_line(&mut self) -> std::io::Result<()> {
-        if let Some(i) = self.buf.iter().position(|&b| b == b'\n') {
-            let line = &self.buf[..=i];
-            let s = String::from_utf8_lossy(line);
-            let trimmed = s.trim_start();
-            self.inner.write_all(trimmed.as_bytes())?;
-            self.buf.drain(..=i);
-        }
-        Ok(())
-    }
-}
-
-impl<W: std::io::Write> std::io::Write for LineTrimWriter<W> {
-    fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
-        self.buf.extend_from_slice(b);
-        self.flush_line()?;
-        Ok(b.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        if !self.buf.is_empty() {
-            let s = String::from_utf8_lossy(&self.buf);
-            let trimmed = s.trim_start();
-            self.inner.write_all(trimmed.as_bytes())?;
-            self.buf.clear();
-        }
-        self.inner.flush()
-    }
-}
-
-/// [`tracing_subscriber::fmt::MakeWriter`] when `INVOCATION_ID` is set; wraps stdout in [`LineTrimWriter`].
-struct SystemdWriter;
-
-impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for SystemdWriter {
-    type Writer = LineTrimWriter<std::io::Stdout>;
-
-    fn make_writer(&'a self) -> Self::Writer {
-        LineTrimWriter::new(std::io::stdout())
-    }
-}
-
-fn init_tracing() {
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-        EnvFilter::new("info,tabularium=debug,tabularium_server=debug,tantivy=warn")
-    });
-    let is_systemd = std::env::var("INVOCATION_ID").is_ok();
-
-    if is_systemd {
-        tracing_subscriber::registry()
-            .with(filter)
-            .with(
-                fmt::layer()
-                    .with_writer(SystemdWriter)
-                    .with_ansi(false)
-                    .event_format(Format::default().without_time())
-                    .with_target(true)
-                    .with_level(true),
-            )
-            .init();
-    } else {
-        tracing_subscriber::registry()
-            .with(filter)
-            .with(
-                fmt::layer()
-                    .with_writer(std::io::stdout)
-                    .with_ansi(true)
-                    .with_target(true)
-                    .with_level(true),
-            )
-            .init();
-    }
-}
 
 #[derive(Parser)]
 #[command(name = "tabularium-server", version, about)]
@@ -114,7 +23,7 @@ struct Cli {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    init_tracing();
+    let telemetry = otel::init_tracing();
 
     let cli = Cli::parse();
     let config_path = std::env::var_os("TABULARIUM_CONFIG")
@@ -148,10 +57,16 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .enable_all()
         .build()?;
 
-    rt.block_on(run(cfg))
+    let result = rt.block_on(run(cfg, &telemetry));
+    telemetry.shutdown();
+    result
 }
 
-async fn run(cfg: config::Config) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn run(
+    cfg: config::Config,
+    telemetry: &Telemetry,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    otel::maybe_spawn_runtime_metrics(telemetry);
     let process_started_at = bma_ts::Monotonic::now();
 
     #[cfg(feature = "mcp")]

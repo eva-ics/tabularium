@@ -34,6 +34,8 @@ Default host mappings (see `compose.yaml`):
 - `http://127.0.0.1:3050` — web UI + API
 - `http://127.0.0.1:3031/mcp` — MCP
 
+For OpenTelemetry + OpenObserve E2E (OTLP/HTTP, no Collector), see [opentelemetry.md](opentelemetry.md) and [e2e/otel/README.md](../e2e/otel/README.md).
+
 ## Volumes and paths
 
 The container contract is explicit:

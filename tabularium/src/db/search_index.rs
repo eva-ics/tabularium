@@ -266,13 +266,16 @@ impl SearchIndex {
     ) -> Result<Vec<(EntryId, f32)>> {
         let reader = self.reader.lock().await;
         let searcher = reader.searcher();
-        let parser = QueryParser::for_index(
-            &self.index,
-            vec![self.f_content, self.f_file_name, self.f_description],
-        );
-        let text_q = parser
-            .parse_query(keywords.as_ref())
-            .map_err(|e| Error::Search(e.to_string()))?;
+        let text_q = {
+            let _parse = tracing::info_span!("search_parse").entered();
+            let parser = QueryParser::for_index(
+                &self.index,
+                vec![self.f_content, self.f_file_name, self.f_description],
+            );
+            parser
+                .parse_query(keywords.as_ref())
+                .map_err(|e| Error::Search(e.to_string()))?
+        };
         let mut q: Box<dyn Query> = match directory_prefix {
             None | Some("") => text_q,
             Some(prefix) => {
@@ -301,6 +304,7 @@ impl SearchIndex {
                 (Occur::Must, doc_q),
             ]));
         }
+        let _tantivy = tracing::info_span!("search_tantivy").entered();
         let top = searcher
             .search(&q, &TopDocs::with_limit(SEARCH_LIMIT))
             .map_err(|e| Error::Search(e.to_string()))?;

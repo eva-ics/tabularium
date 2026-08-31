@@ -19,6 +19,7 @@ use crate::auth::{
     resolve_request_auth_arc, whoami_json,
 };
 use crate::jwt_assertion::AssertionRuntime;
+use crate::otel;
 use crate::test_payload::test_payload;
 use crate::ws_doc::ws_upgrade;
 use tabularium::jsonrpc_codes::{FORBIDDEN, UNAUTHORIZED};
@@ -406,7 +407,10 @@ async fn get_or_list(
                     .await?
                 {
                     DocumentWaitStatus::Changed => Ok(StatusCode::NO_CONTENT.into_response()),
-                    DocumentWaitStatus::TimedOut => Ok(StatusCode::GATEWAY_TIMEOUT.into_response()),
+                    DocumentWaitStatus::TimedOut => {
+                        otel::record_wait_timeout();
+                        Ok(StatusCode::GATEWAY_TIMEOUT.into_response())
+                    }
                 };
             }
             let (meta, body) = st.db.cat_document_bundle(fid).await?;
@@ -1196,9 +1200,12 @@ pub(crate) async fn dispatch_app_rpc(
                 .await?
             {
                 DocumentWaitStatus::Changed => Ok(Value::Null),
-                DocumentWaitStatus::TimedOut => Err(RpcAppError::Other(Error::InvalidInput(
-                    "wait timed out".into(),
-                ))),
+                DocumentWaitStatus::TimedOut => {
+                    otel::record_wait_timeout();
+                    Err(RpcAppError::Other(Error::InvalidInput(
+                        "wait timed out".into(),
+                    )))
+                }
             }
         }
         "get_document_ref" => {
