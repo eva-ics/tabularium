@@ -373,6 +373,43 @@ def test_spa_deep_link_not_404(selenium_driver, tabularium_base_url):
     assert "404" not in selenium_driver.title.lower()
 
 
+def test_spa_librarium_abs_path_opens_document(selenium_driver, tabularium_base_url):
+    slug = uuid.uuid4().hex[:8]
+    name = f"pretty_{slug}"
+    mkdir(tabularium_base_url, name)
+    base = tabularium_base_url.rstrip("/")
+    marker = f"pretty-open-{slug}"
+    requests.post(
+        f"{base}/api/doc/{name}",
+        json={"name": "tracker.md", "content": f"# {marker}\n"},
+        timeout=15,
+    ).raise_for_status()
+    selenium_driver.get(f"{base}/{name}/tracker.md")
+    _wait_app_ready(selenium_driver)
+    _wait(selenium_driver).until(lambda d: "open=" in d.current_url)
+    assert f"/entries/{name}" in selenium_driver.current_url
+    _wait(selenium_driver).until(
+        EC.text_to_be_present_in_element(
+            (By.CSS_SELECTOR, "[data-testid='preview-pane']"),
+            marker,
+        ),
+    )
+
+
+def test_spa_librarium_abs_path_opens_directory(
+    selenium_driver, tabularium_base_url, seed_dir: str,
+):
+    selenium_driver.get(f"{tabularium_base_url.rstrip('/')}/{seed_dir}")
+    _wait_app_ready(selenium_driver)
+    _wait(selenium_driver).until(
+        EC.text_to_be_present_in_element(
+            (By.CSS_SELECTOR, "[data-testid='entries-path']"),
+            f"/{seed_dir}",
+        ),
+    )
+    assert "open=" not in selenium_driver.current_url
+
+
 # --- Group E — infrastructure ---
 
 

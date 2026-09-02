@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Web UI maps human librarium URLs (`/projects/…/doc.md`) to the entries
+  browser instead of sending unknown paths to the library root.
+
 ## 0.1.7 - 2026-05-11
 
 Authentication, concurrency, and operator tooling release.

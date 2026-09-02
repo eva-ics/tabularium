@@ -18,6 +18,8 @@ jobs:
           node-version: 22
       - name: Build UI
         run: cd ui && npm ci && npm run build
+      - name: UI unit tests
+        run: cd ui && npm test
       - name: cargo test
         run: cargo test --workspace --release
   fmt:

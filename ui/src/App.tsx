@@ -1,10 +1,27 @@
 import { lazy, Suspense } from "react";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import {
+  BrowserRouter,
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+} from "react-router-dom";
 import { AppShell } from "./app/AppShell";
 import { AuthShell } from "./app/AuthShell";
+import { entriesUrlFromLibrariumPathname } from "./features/entries/entriesPath";
 import { EntriesView } from "./features/entries/EntriesView";
 
 const StatsView = lazy(() => import("./features/stats/StatsView"));
+
+function LibrariumPathRedirect() {
+  const { pathname, hash } = useLocation();
+  return (
+    <Navigate
+      to={`${entriesUrlFromLibrariumPathname(pathname)}${hash}`}
+      replace
+    />
+  );
+}
 
 export default function App() {
   return (
@@ -22,7 +39,7 @@ export default function App() {
                 </Suspense>
               }
             />
-            <Route path="*" element={<Navigate to="/entries" replace />} />
+            <Route path="*" element={<LibrariumPathRedirect />} />
           </Route>
         </Route>
       </Routes>
