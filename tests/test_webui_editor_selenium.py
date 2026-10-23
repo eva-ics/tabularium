@@ -1,6 +1,6 @@
 """Selenium coverage for meetings/webui.editor — Ferrum manifest T01–T14.
 
-Prerequisites: TABULARIUM_TEST_URL pointing at http://10.90.1.122:<port> (AGENTS.md).
+Prerequisites: TABULARIUM_TEST_URL pointing at http://10.90.1.102:<port> (AGENTS.md).
 """
 
 from __future__ import annotations
@@ -198,8 +198,8 @@ def test_editor_t03b_edit_focuses_textarea(
             (By.CSS_SELECTOR, "[data-testid='preview-editor']"),
         ),
     )
-    focused = selenium_driver.execute_script("return document.activeElement;")
-    assert focused.id == ta.id
+    # Editor focus is applied after React commits; visibility alone is not readiness.
+    _wait(selenium_driver).until(lambda d: d.switch_to.active_element == ta)
 
 
 def test_editor_t04_raw_toggle_disabled_in_edit_mode(

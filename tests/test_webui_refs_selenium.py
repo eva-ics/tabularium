@@ -4,7 +4,7 @@ Covers the heresy fixed in PreviewPane: relative/absolute internal refs must
 resolve to proper /entries/<dir>?open=<abs_path> URLs so that both click
 navigation and copy-link work correctly.
 
-Prerequisites: TABULARIUM_TEST_URL pointing at http://10.90.1.122:<port> (AGENTS.md).
+Prerequisites: TABULARIUM_TEST_URL pointing at http://10.90.1.102:<port> (AGENTS.md).
 """
 
 from __future__ import annotations

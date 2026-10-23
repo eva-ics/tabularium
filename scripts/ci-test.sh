@@ -4,13 +4,13 @@
 #   2. Remote: deps + `npm ci && npm run build` in ui/; then cargo build --workspace --release
 #   3. Best-effort: free CI_LISTEN port (fuser/lsof) so no stray server blocks the bind
 #   4. Ephemeral DB + index under /tmp; tabularium-server (release) in background, logs → $CI_TMP/server.log
-#   5. pytest tests/ with TABULARIUM_TEST_URL=http://<CI_HOST>:<port> (Selenium requires 10.90.1.122 per AGENTS.md) + TABULARIUM_TB_BIN; then remote `just test`
+#   5. pytest tests/ with TABULARIUM_TEST_URL=http://<CI_HOST>:<port> (Selenium requires 10.90.1.102 per AGENTS.md) + TABULARIUM_TB_BIN; then remote `just test`
 #   6. trap EXIT/INT/TERM: kill server PID, rm $CI_TMP
 #
-# Env: CI_HOST (default 10.90.1.122), CI_PROJECT (default tabularium), CI_LISTEN (default 127.0.0.1:13050 — port only used; server binds 0.0.0.0).
+# Env: CI_HOST (default 10.90.1.102), CI_PROJECT (default tabularium), CI_LISTEN (default 127.0.0.1:13050 — port only used; server binds 0.0.0.0).
 set -euo pipefail
 
-CI_HOST="${CI_HOST:-10.90.1.122}"
+CI_HOST="${CI_HOST:-10.90.1.102}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CI_PROJECT="${CI_PROJECT:-tabularium}"
 REMOTE_DIR="/opt/$CI_PROJECT"

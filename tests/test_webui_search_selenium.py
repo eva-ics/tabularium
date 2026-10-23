@@ -1,6 +1,6 @@
 """Selenium coverage for meetings/webui.search — Ferrum test manifest T01–T20.
 
-Prerequisites: TABULARIUM_TEST_URL pointing at http://10.90.1.122:<port> (AGENTS.md).
+Prerequisites: TABULARIUM_TEST_URL pointing at http://10.90.1.102:<port> (AGENTS.md).
 """
 
 from __future__ import annotations
@@ -109,7 +109,10 @@ def _focus_search_list(driver):
             (By.CSS_SELECTOR, "[data-testid='search-mode'] ul[role='listbox']"),
         ),
     )
-    ul.click()
+    # Clicking the list center can activate a result and focus its preview.
+    # These cases test keyboard handling on the list, not row activation.
+    driver.execute_script("arguments[0].focus()", ul)
+    _wait(driver).until(lambda d: d.switch_to.active_element == ul)
 
 
 def _wait_search_mode(driver, present: bool = True, timeout=20):
