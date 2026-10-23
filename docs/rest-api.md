@@ -53,10 +53,20 @@ Path segments under `/api/doc/…` accept **name** or **numeric id** per segment
 
 ## Search
 
-- `GET /api/search?q=...`
+- `GET /api/search?q=...&kind=hybrid&with_status=true`
 - `POST /api/search` — JSON `{ "q": "..." }`, `application/x-www-form-urlencoded` (`q=...`), or `multipart/form-data` with field `q`.
 
-Response: JSON array of `{ document_id, path, snippet, score, line_number? }`.
+By default the response remains a JSON hit array. `with_status=true` returns `{ hits, lexical_status, semantic_status }`. Hits also expose optional `line_end` and `revision` for semantic excerpts. Both formats carry `X-Tabularium-Lexical-Status` and `X-Tabularium-Semantic-Status` response headers.
+
+`POST /api/reindex` accepts JSON `{ "path": "/", "kind": "semantic" }`; admin permission is required when API authentication is enabled.
 
 Errors: JSON `{ "error": "message" }` with `400`, `401`, `403`, `404`, `409`,
 or `500` as appropriate.
+
+
+## Semantic and hybrid search
+
+Search and reindex accept `kind`: `lexical`, `semantic`, or `hybrid` (default).
+Optional `[semantic]` config enables OpenAI-compatible embeddings, including custom HTTP headers.
+The semantic sidecar is rebuilt without migrating the document database.
+See [semantic search](semantic-search.md) for configuration, API status envelopes, upgrade steps, and fallback behavior.

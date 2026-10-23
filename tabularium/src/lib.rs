@@ -1,7 +1,7 @@
 //! Tabularium — document storage for the faithful (SQLite + full-text search).
 //!
 //! Cargo features (see `Cargo.toml`):
-//! - **`db`** — `Database`, `SqliteStorage`, Tantivy search, SQLite.
+//! - **`db`** — `Database`, `SqliteStorage`, Tantivy search, SQLite, embeddings HTTP client.
 //! - **`client`** — `rpc::Client` (`reqwest`); implies **`db`**.
 //! - Default: **`client`** (implies **`db`**; same as **`full`**).
 //!
@@ -10,6 +10,8 @@
 #![forbid(unsafe_code)]
 
 mod error;
+mod search_kind;
+pub use search_kind::SearchKind;
 pub mod jsonrpc_codes;
 mod validation;
 
@@ -41,7 +43,7 @@ pub use db::parse_user_timestamp;
 #[cfg(feature = "db")]
 pub use db::{
     Database, DocumentMeta, DocumentWaitStatus, EntryId, EntryKind, GrepLine, ListedEntry,
-    SearchHit, SqliteDatabase, SqliteStorage, Storage, WcStats,
+    SearchHit, SearchReport, SemanticConfig, SqliteDatabase, SqliteStorage, Storage, WcStats,
 };
 pub use error::{Error, Result};
 #[cfg(feature = "client")]

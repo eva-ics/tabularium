@@ -26,7 +26,10 @@ use tabularium::resource_path::{
     canonical_path_segments, join_under_directory, normalize_path_for_rpc,
 };
 use tabularium::validate_entity_name;
-use tabularium::{DocumentWaitStatus, EntryId, EntryKind, Error, SqliteDatabase, TailMode};
+use tabularium::{
+    DocumentWaitStatus, EntryId, EntryKind, Error, SearchKind, SearchReport, SqliteDatabase,
+    TailMode,
+};
 
 const SEARCH_LIMIT: usize = 256;
 
@@ -111,6 +114,7 @@ pub fn router(state: AppState) -> Router {
                 .delete(rest_delete_any),
         )
         .route("/api/search", get(search_get).post(search_post))
+        .route("/api/reindex", post(rest_reindex))
         .route("/ws", get(ws_upgrade))
         .route("/rpc", post(rpc_dispatch))
         .layer(DefaultBodyLimit::max(32 * 1024 * 1024))
@@ -206,6 +210,10 @@ struct SearchQuery {
     q: String,
     #[serde(default)]
     dir: Option<String>,
+    #[serde(default)]
+    kind: SearchKind,
+    #[serde(default)]
+    with_status: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -214,6 +222,10 @@ struct SearchPostBody {
     q: String,
     #[serde(default)]
     dir: Option<String>,
+    #[serde(default)]
+    kind: SearchKind,
+    #[serde(default)]
+    with_status: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -542,62 +554,74 @@ async fn rest_delete_any(
     Ok(StatusCode::NO_CONTENT)
 }
 
+fn search_auth_context(auth: &RequestAuth) -> Option<&tabularium::AuthContext> {
+    match auth {
+        RequestAuth::Disabled => None,
+        RequestAuth::Authenticated(ctx) => Some(ctx),
+    }
+}
+
+fn search_wire(report: &SearchReport, with_status: bool) -> Value {
+    let hits: Vec<Value> = report.hits().iter().map(|h| json!({
+        "document_id": h.document_id().raw(), "path": h.path(), "snippet": h.snippet(),
+        "score": h.score(), "line_number": h.line_number(), "line_end": h.line_end(), "revision": h.revision(),
+    })).collect();
+    if with_status {
+        json!({"hits": hits, "lexical_status":report.lexical_status(),"semantic_status":report.semantic_status()})
+    } else {
+        Value::Array(hits)
+    }
+}
+
 async fn search_get(
     State(st): State<AppState>,
     Query(q): Query<SearchQuery>,
     headers: HeaderMap,
-) -> ApiResult<Json<Value>> {
+) -> ApiResult<Response> {
     let auth = api_resolve_auth(&st, &headers).await?;
-    let dir = q.dir.as_deref();
-    search_inner(&st, &auth, &q.q, dir).await
+    search_inner(&st, &auth, &q.q, q.dir.as_deref(), q.kind, q.with_status).await
 }
 
 async fn search_post(
     State(st): State<AppState>,
     headers: HeaderMap,
     body: Bytes,
-) -> ApiResult<Json<Value>> {
+) -> ApiResult<Response> {
     let auth = api_resolve_auth(&st, &headers).await?;
     let ct = headers
         .get(header::CONTENT_TYPE)
         .and_then(|h| h.to_str().ok())
         .unwrap_or("");
-    let (q, dir_owned): (String, Option<String>) = if is_multipart_form(ct) {
+    let b: SearchPostBody = if is_multipart_form(ct) {
         let boundary =
             multer::parse_boundary(ct).map_err(|e| ApiError(Error::InvalidInput(e.to_string())))?;
-        let mut fields = crate::multipart_body::form_fields(body, boundary)
+        let fields = crate::multipart_body::form_fields(body, boundary)
             .await
             .map_err(ApiError)?;
-        let q = fields
-            .remove("q")
-            .ok_or_else(|| ApiError(Error::InvalidInput("multipart field q required".into())))?;
-        let dir = fields.remove("dir");
-        (q, dir)
-    } else if is_www_form_urlencoded(ct) {
-        let b: SearchPostBody = serde_urlencoded::from_bytes(&body)
-            .map_err(|e| ApiError(Error::InvalidInput(e.to_string())))?;
-        (b.q, b.dir)
-    } else {
-        let b: SearchPostBody = serde_json::from_slice(&body)
-            .map_err(|e| ApiError(Error::InvalidInput(e.to_string())))?;
-        (b.q, b.dir)
-    };
-    let dir = dir_owned.as_deref();
-    search_inner(&st, &auth, &q, dir).await
-}
-
-fn filter_search_hits(
-    auth: &RequestAuth,
-    hits: Vec<tabularium::SearchHit>,
-) -> Vec<tabularium::SearchHit> {
-    match auth {
-        RequestAuth::Disabled => hits,
-        RequestAuth::Authenticated(ctx) if ctx.admin() => hits,
-        RequestAuth::Authenticated(ctx) => hits
+        let values: Map<String, Value> = fields
             .into_iter()
-            .filter(|h| ctx.check_read_abs(h.path()).is_ok())
-            .collect(),
-    }
+            .map(|(k, v)| {
+                let value = if k == "with_status" {
+                    match v.as_str() {
+                        "true" => Value::Bool(true),
+                        "false" => Value::Bool(false),
+                        _ => Value::String(v),
+                    }
+                } else {
+                    Value::String(v)
+                };
+                (k, value)
+            })
+            .collect();
+        serde_json::from_value(Value::Object(values))
+            .map_err(|e| ApiError(Error::InvalidInput(e.to_string())))?
+    } else if is_www_form_urlencoded(ct) {
+        serde_urlencoded::from_bytes(&body)
+            .map_err(|e| ApiError(Error::InvalidInput(e.to_string())))?
+    } else {
+        serde_json::from_slice(&body).map_err(|e| ApiError(Error::InvalidInput(e.to_string())))?
+    };
+    search_inner(&st, &auth, &b.q, b.dir.as_deref(), b.kind, b.with_status).await
 }
 
 async fn search_inner(
@@ -605,7 +629,9 @@ async fn search_inner(
     auth: &RequestAuth,
     q: &str,
     dir_prefix: Option<&str>,
-) -> ApiResult<Json<Value>> {
+    kind: SearchKind,
+    with_status: bool,
+) -> ApiResult<Response> {
     let scope = if let Some(d) = dir_prefix {
         let n = normalize_path_for_rpc(d).map_err(ApiError)?;
         canonical_path_segments(&n).map_err(ApiError)?;
@@ -616,22 +642,57 @@ async fn search_inner(
         SearchScopeReady::Global
     };
     scope.authorize(auth).map_err(ApiError)?;
-    let (dp, restrict_doc) = scope.directory_prefix_and_restrict();
-    let hits = st.db.search_hits(q, dp, SEARCH_LIMIT, restrict_doc).await?;
-    let hits = filter_search_hits(auth, hits);
-    let v: Vec<Value> = hits
-        .into_iter()
-        .map(|h| {
-            json!({
-                "document_id": h.document_id().raw(),
-                "path": h.path(),
-                "snippet": h.snippet(),
-                "score": h.score(),
-                "line_number": h.line_number(),
-            })
-        })
-        .collect();
-    Ok(Json(Value::Array(v)))
+    let (dp, only) = scope.directory_prefix_and_restrict();
+    let report = st
+        .db
+        .search_report(q, dp, SEARCH_LIMIT, only, kind, search_auth_context(auth))
+        .await?;
+    let mut response = Json(search_wire(&report, with_status)).into_response();
+    response.headers_mut().insert(
+        "x-tabularium-lexical-status",
+        HeaderValue::from_str(report.lexical_status()).expect("static status"),
+    );
+    response.headers_mut().insert(
+        "x-tabularium-semantic-status",
+        HeaderValue::from_str(report.semantic_status()).expect("static status"),
+    );
+    Ok(response)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReindexBody {
+    #[serde(default)]
+    path: Option<String>,
+    #[serde(default)]
+    kind: SearchKind,
+}
+
+async fn rest_reindex(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Json(b): Json<ReindexBody>,
+) -> ApiResult<Json<Value>> {
+    let auth = api_resolve_auth(&st, &headers).await?;
+    require_mgmt_admin(&auth)?;
+    let path = b
+        .path
+        .as_deref()
+        .filter(|p| !p.is_empty() && *p != "/")
+        .map(normalize_path_for_rpc)
+        .transpose()?;
+    st.db.reindex_kind(path.as_deref(), b.kind).await?;
+    Ok(Json(Value::Null))
+}
+
+fn rpc_search_kind(m: &Map<String, Value>) -> tabularium::Result<SearchKind> {
+    match m.get("kind") {
+        None => Ok(SearchKind::default()),
+        Some(Value::String(s)) => s.parse(),
+        Some(_) => Err(Error::InvalidInput(
+            "kind must be lexical, semantic, or hybrid".into(),
+        )),
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1222,21 +1283,26 @@ pub(crate) async fn dispatch_app_rpc(
             };
             scope.authorize(auth).map_err(RpcAppError::Other)?;
             let (dp, restrict_doc) = scope.directory_prefix_and_restrict();
-            let hits = st.db.search_hits(q, dp, SEARCH_LIMIT, restrict_doc).await?;
-            let hits = filter_search_hits(auth, hits);
-            let v: Vec<Value> = hits
-                .into_iter()
-                .map(|h| {
-                    json!({
-                        "document_id": h.document_id().raw(),
-                        "path": h.path(),
-                        "snippet": h.snippet(),
-                        "score": h.score(),
-                        "line_number": h.line_number(),
-                    })
-                })
-                .collect();
-            Ok(Value::Array(v))
+            let kind = rpc_search_kind(&m)?;
+            let with_status = match m.get("with_status") {
+                None => false,
+                Some(Value::Bool(b)) => *b,
+                Some(_) => {
+                    return Err(Error::InvalidInput("with_status must be boolean".into()).into());
+                }
+            };
+            let report = st
+                .db
+                .search_report(
+                    q,
+                    dp,
+                    SEARCH_LIMIT,
+                    restrict_doc,
+                    kind,
+                    search_auth_context(auth),
+                )
+                .await?;
+            Ok(search_wire(&report, with_status))
         }
         "reindex" => {
             require_mgmt_admin(auth).map_err(RpcAppError::Other)?;
@@ -1256,7 +1322,9 @@ pub(crate) async fn dispatch_app_rpc(
                     }
                 }
             };
-            st.db.reindex(filter.as_deref()).await?;
+            st.db
+                .reindex_kind(filter.as_deref(), rpc_search_kind(&m)?)
+                .await?;
             Ok(Value::Null)
         }
         "head" => {

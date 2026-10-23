@@ -165,7 +165,9 @@ fn flags_for(sub: &str) -> &'static [&'static str] {
         "chat" => &["-i", "--id", "--raw"],
         "cp" | "rm" => &["-r", "--recursive"],
         "export" => &["-d", "--destination"],
-        "find" | "search" => &["-d", "--directory"],
+        "find" => &["-d", "--directory"],
+        "search" => &["-d", "--directory", "--kind"],
+        "reindex" => &["--kind"],
         "grep" => &["-m", "-v", "--invert-match"],
         "head" => &["-n", "--raw"],
         "import" => &["-n", "--name"],
@@ -1121,6 +1123,27 @@ impl Completer for TbHelper {
             }
         }
 
+        if matches!(sub, "search" | "reindex") {
+            let kind_partial = if ends_with_space && words.last().copied() == Some("--kind") {
+                Some("")
+            } else if !ends_with_space && words.len() >= 3 && words[words.len() - 2] == "--kind" {
+                Some(words[words.len() - 1])
+            } else {
+                None
+            };
+            if let Some(prefix) = kind_partial {
+                let pairs = ["lexical", "semantic", "hybrid"]
+                    .into_iter()
+                    .filter(|k| k.starts_with(prefix))
+                    .map(|k| Pair {
+                        display: k.into(),
+                        replacement: format!("{k} "),
+                    })
+                    .collect();
+                return Ok((if ends_with_space { pos } else { start }, pairs));
+            }
+        }
+
         if sub == "grep"
             && let Some(r) =
                 self.complete_grep(&mut state, &words, ends_with_space, partial, start, pos)
@@ -1456,7 +1479,12 @@ pub(crate) fn apply_shell_cwd(cmd: Command, shell_cwd: Option<&str>) -> Result<C
             src: resolve_shell_tree_scope(&src, shell_cwd)?,
             dst: resolve_shell_tree_scope(&dst, shell_cwd)?,
         },
-        Command::Search { directory, query } => Command::Search {
+        Command::Search {
+            directory,
+            query,
+            kind,
+        } => Command::Search {
+            kind,
             directory: match directory {
                 None => None,
                 Some(c) => Some(resolve_shell_tree_scope(&c, shell_cwd)?),
@@ -1502,7 +1530,8 @@ pub(crate) fn apply_shell_cwd(cmd: Command, shell_cwd: Option<&str>) -> Result<C
             path: resolve_shell_doc_path(&path, shell_cwd)?,
             time,
         },
-        Command::Reindex { path } => Command::Reindex {
+        Command::Reindex { path, kind } => Command::Reindex {
+            kind,
             path: resolve_shell_tree_scope(&path, shell_cwd)?,
         },
         Command::Whoami => Command::Whoami,
@@ -2393,23 +2422,37 @@ mod shell_cwd_tests {
 
     #[test]
     fn reindex_preserves_slash_sentinel_strips_directory_segment() {
-        let r = unwrap_ac(Command::Reindex { path: "/".into() }, Some("c"));
-        assert!(matches!(r, Command::Reindex { path } if path == "/"));
+        let r = unwrap_ac(
+            Command::Reindex {
+                kind: Default::default(),
+                path: "/".into(),
+            },
+            Some("c"),
+        );
+        assert!(matches!(r, Command::Reindex { path, .. } if path == "/"));
         let r2 = unwrap_ac(
             Command::Reindex {
+                kind: Default::default(),
                 path: "/work".into(),
             },
             Some("c"),
         );
-        assert!(matches!(r2, Command::Reindex { path } if path == "work"));
-        let r_dot = unwrap_ac(Command::Reindex { path: ".".into() }, Some("c"));
-        assert!(matches!(r_dot, Command::Reindex { path } if path == "c"));
+        assert!(matches!(r2, Command::Reindex { path, .. } if path == "work"));
+        let r_dot = unwrap_ac(
+            Command::Reindex {
+                kind: Default::default(),
+                path: ".".into(),
+            },
+            Some("c"),
+        );
+        assert!(matches!(r_dot, Command::Reindex { path, .. } if path == "c"));
     }
 
     #[test]
     fn search_directory_optional_strips_leading_slash() {
         let s = unwrap_ac(
             Command::Search {
+                kind: Default::default(),
                 directory: None,
                 query: vec!["q".into()],
             },
@@ -2418,12 +2461,14 @@ mod shell_cwd_tests {
         assert!(matches!(
             s,
             Command::Search {
+                kind: _,
                 directory: None,
                 ..
             }
         ));
         let s2 = unwrap_ac(
             Command::Search {
+                kind: Default::default(),
                 directory: Some("/notes".into()),
                 query: vec!["q".into()],
             },
@@ -2432,6 +2477,7 @@ mod shell_cwd_tests {
         assert!(matches!(s2, Command::Search { directory: Some(ref x), .. } if x == "notes"));
         let s3 = unwrap_ac(
             Command::Search {
+                kind: Default::default(),
                 directory: Some("/".into()),
                 query: vec!["q".into()],
             },
@@ -2444,6 +2490,7 @@ mod shell_cwd_tests {
     fn search_dot_directory_resolves_cwd() {
         let s = unwrap_ac(
             Command::Search {
+                kind: Default::default(),
                 directory: Some(".".into()),
                 query: vec!["q".into()],
             },

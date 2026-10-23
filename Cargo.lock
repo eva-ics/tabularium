@@ -3485,6 +3485,7 @@ name = "tabularium"
 version = "0.1.7"
 dependencies = [
  "async-trait",
+ "axum",
  "bma-ts",
  "chrono",
  "dashmap",

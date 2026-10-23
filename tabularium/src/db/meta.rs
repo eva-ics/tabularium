@@ -70,6 +70,8 @@ pub struct SearchHit {
     snippet: String,
     score: f32,
     line_number: Option<usize>,
+    line_end: Option<usize>,
+    revision: Option<String>,
 }
 
 impl SearchHit {
@@ -86,7 +88,29 @@ impl SearchHit {
             snippet,
             score,
             line_number,
+            line_end: line_number,
+            revision: None,
         }
+    }
+
+    pub(crate) fn with_source(mut self, revision: String, line_end: usize) -> Self {
+        self.revision = Some(revision);
+        self.line_end = Some(line_end);
+        self
+    }
+
+    pub(crate) fn set_score(&mut self, score: f32) {
+        self.score = score;
+    }
+
+    /// Last 1-based source line represented by this excerpt.
+    pub fn line_end(&self) -> Option<usize> {
+        self.line_end
+    }
+
+    /// Source revision for validated semantic excerpts.
+    pub fn revision(&self) -> Option<&str> {
+        self.revision.as_deref()
     }
 
     pub fn document_id(&self) -> EntryId {

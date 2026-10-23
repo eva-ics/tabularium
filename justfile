@@ -76,7 +76,7 @@ set-version version:
 check: build-ui
     cargo check --workspace
 
-# Library only: storage stack without `reqwest` (matches server dependency shape).
+# Library only: storage stack with the optional embeddings HTTP client (matches server dependency shape).
 check-tabularium-db:
     cargo check -p tabularium --no-default-features --features db
 

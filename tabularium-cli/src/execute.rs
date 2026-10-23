@@ -885,7 +885,11 @@ pub(crate) async fn execute(
                 }
             }
         }
-        Command::Search { directory, query } => {
+        Command::Search {
+            directory,
+            query,
+            kind,
+        } => {
             let q = query.join(" ");
             if q.is_empty() {
                 return Err("search: empty query".into());
@@ -896,9 +900,22 @@ pub(crate) async fn execute(
                     Some(normalize_user_path(c).map_err(|e| -> BoxErr { e.to_string().into() })?)
                 }
             };
-            let hits = client
-                .search(&q, dir.as_deref().map(std::path::Path::new))
+            let report = client
+                .search_with_kind(&q, dir.as_deref().map(std::path::Path::new), kind)
                 .await?;
+            if !matches!(
+                report.semantic_status(),
+                "ready" | "disabled" | "not_requested" | "unsupported"
+            ) {
+                eprintln!(
+                    "search: semantic {} (use reindex --kind semantic / when needed)",
+                    report.semantic_status()
+                );
+            }
+            if report.lexical_status() == "unavailable" {
+                eprintln!("search: lexical unavailable; semantic results only");
+            }
+            let hits = report.into_hits();
             if use_ansi_stdout() {
                 let mut out = String::new();
                 for h in &hits {
@@ -1381,7 +1398,7 @@ pub(crate) async fn execute(
         } => {
             cmd_cp(client, &src, &dst, recursive).await?;
         }
-        Command::Reindex { path } => {
+        Command::Reindex { path, kind } => {
             let path =
                 normalize_user_path(path.trim()).map_err(|e| -> BoxErr { e.to_string().into() })?;
             let rpc_path = if path == "/" {
@@ -1389,7 +1406,7 @@ pub(crate) async fn execute(
             } else {
                 Some(std::path::Path::new(path.as_str()))
             };
-            client.reindex(rpc_path).await?;
+            client.reindex_with_kind(rpc_path, kind).await?;
         }
     }
     Ok(ExecuteOutcome::Ok)

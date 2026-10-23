@@ -4,6 +4,10 @@ mod entry_kind;
 mod meta;
 mod ops;
 mod search_index;
+mod semantic;
+mod semantic_ops;
+pub use semantic::SemanticConfig;
+pub use semantic_ops::SearchReport;
 mod sqlite;
 mod storage;
 mod time_parse;
@@ -77,6 +81,7 @@ pub enum DocumentWaitStatus {
 pub struct Database<S: Storage> {
     storage: S,
     search: SearchIndex,
+    semantic: Option<Arc<semantic::SemanticIndex>>,
     cache: Cache<EntryId, String>,
     cache_active: bool,
     doc_wait: Arc<DashMap<EntryId, wait_cell::Sender<u64>>>,
@@ -112,6 +117,7 @@ impl SqliteDatabase {
         Ok(Database {
             storage,
             search,
+            semantic: None,
             cache,
             cache_active: cache_size > 0,
             doc_wait: Arc::new(DashMap::new()),
@@ -177,14 +183,20 @@ impl<S: Storage> Database<S> {
             .storage
             .files_for_search_reindex(Some(directory_path))
             .await?;
-        self.search.upsert_batch(&rows).await
+        self.search.upsert_batch(&rows).await?;
+        for (id, _, _, _, _) in rows {
+            self.queue_semantic(id).await;
+        }
+        Ok(())
     }
 
     async fn reindex_file_in_search(&self, file_id: EntryId) -> Result<()> {
         let (dp, name, desc, content) = self.storage.file_search_index_fields(file_id).await?;
         self.search
             .upsert_file(file_id, &dp, &name, &desc, &content)
-            .await
+            .await?;
+        self.queue_semantic(file_id).await;
+        Ok(())
     }
 
     fn bump_doc_wait(&self, file_id: EntryId) {
@@ -300,6 +312,7 @@ impl<S: Storage> Database<S> {
         self.storage.delete_directory_recursive(path).await?;
         for (id, _, _, _, _) in rows {
             self.search.delete_file(id).await?;
+            self.queue_semantic(id).await;
             self.cache.invalidate(&id).await;
             self.doc_wait.remove(&id);
         }
@@ -373,6 +386,7 @@ impl<S: Storage> Database<S> {
     pub async fn delete_document(&self, file_id: EntryId) -> Result<()> {
         self.storage.delete_file(file_id).await?;
         self.search.delete_file(file_id).await?;
+        self.queue_semantic(file_id).await;
         self.cache.invalidate(&file_id).await;
         self.doc_wait.remove(&file_id);
         self.doc_append_locks.remove(&file_id);
@@ -1264,3 +1278,6 @@ mod tests {
         assert_eq!(st, DocumentWaitStatus::Changed);
     }
 }
+
+#[cfg(test)]
+mod semantic_tests;

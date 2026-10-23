@@ -165,7 +165,17 @@ async fn run(cfg: config::Config) -> Result<(), Box<dyn std::error::Error + Send
     let mcp_full = cfg.mcp.as_ref().is_some_and(|m| m.full);
 
     let db_uri = format!("sqlite://{}", cfg.server.database_path.display());
-    let db = Arc::new(tabularium::SqliteDatabase::init(&db_uri, &cfg.server.index_dir, 256).await?);
+    let mut db = tabularium::SqliteDatabase::init(&db_uri, &cfg.server.index_dir, 256).await?;
+    if let Some(semantic) = cfg.semantic {
+        db = db
+            .with_semantic(
+                semantic,
+                &cfg.server.index_dir.with_extension("semantic.index"),
+            )
+            .await?;
+    }
+    let db = Arc::new(db);
+    db.start_semantic_worker();
     let wait_timeout = Duration::from_secs(cfg.server.timeout.max(1));
     let oidc = match cfg.oidc.as_ref() {
         None => None,

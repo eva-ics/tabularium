@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Adds optional OpenAI-compatible embeddings with custom headers and a rebuildable
+  semantic sidecar, without changing the document database schema.
+- Adds `lexical`, `semantic`, and default `hybrid` search/reindex modes across
+  CLI, REST, JSON-RPC, and MCP, with rank fusion and explicit engine status.
+- Keeps semantic excerpts tied to current source revisions and exact line ranges;
+  persistent background refresh handles writes, moves, and deletions.
+- Moves the integration host to `10.90.1.102` and stabilizes Selenium focus helpers.
+
 ## 0.1.7 - 2026-05-11
 
 Authentication, concurrency, and operator tooling release.

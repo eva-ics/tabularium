@@ -73,14 +73,14 @@ rename_document — path, new_name.
 rename_directory — path, new_path.
 move_document — path, new_path (destination file path).
 move_directory — path, new_parent, new_name.
-reindex — path optional (omit or `/` for full rebuild; subtree otherwise).
+reindex — kind optional: lexical|semantic|hybrid (default hybrid); path optional (omit or `/` for full rebuild; subtree otherwise). Semantic requires configured embeddings and the first rebuild must be full.
 "#;
 
 const MCP_METHODS_CATALOG: &str = r#"MCP tools (parameters mirror POST /rpc JSON objects).
 
 Auth: when **`[server].authenticate = true`**, attach **`X-Auth-Key: <psk>`** on MCP HTTP requests (same as REST/`POST /rpc`), unless your proxy injects the configured OIDC assertion header. Mint keys with **`psk_create`** when **`mcp.full = true`** and admin ACL allows.
 
-Doctrine: **list_directory** (repeated) = tree walk / "find by listing" — locate entries by path and name; **search** = indexed full-text across document bodies; **grep** = regex lines in one file only.
+Doctrine: **list_directory** (repeated) = tree walk / "find by listing" — locate entries by path and name; **search** = hybrid lexical/semantic search across document bodies; **grep** = regex lines in one file only.
 
 help — (no params) Base doctrine + short tool index.
 server_help — (no params) Text from config `server_help` path, or empty string.
@@ -93,7 +93,7 @@ append_document — path, content, force (default false). Create new document, o
 append_if_not_contains — path, marker, content: atomically append `content` only if `marker` is **not** already a substring of the UTF-8 body (Rust `str::contains`; e.g. marker `DONE` matches inside `UNDONE`). **Document must exist** (errors if missing). Returns JSON `{ "appended": bool, "revision": string }`.
 say_document — path, from_id (sender nickname), content. **Preferred for meetings, conversations, and task scrolls** — server appends a markdown block with the sender in the heading. **Do not prefix the nickname into content**; provide it via from_id only. **Target file must already exist** (use put_document or append_document to create). *Exempt from the `force` guard by design*: `say_document` is the only mutation rite that always appends to an existing scroll, because it cannot create new documents and operates exclusively on conversation/meeting contexts where appending is the intended action.
 list_directory — path optional (omit or empty for root `/`). Rows include modified_at and `revision` (files only); use this to walk the tree; there is no separate MCP find tool.
-search — query, path optional (subtree filter). Indexed full-text over document body, file name, and description.
+search — query, path optional (subtree filter), kind optional: lexical|semantic|hybrid (default hybrid). Combines Tantivy over bodies/names/descriptions with optional semantic body excerpts; returns engine status.
 create_directory — path, description optional, parents optional (`true` = POSIX `mkdir -p`; default `false`).
 describe — path; optional description string (omit to read; empty string clears).
 document_exists — path (wire RPC name `exists`; tests file only).
@@ -283,10 +283,30 @@ struct ListDirectoryArg {
 }
 
 #[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+enum KindArg {
+    Lexical,
+    Semantic,
+    Hybrid,
+}
+impl KindArg {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Lexical => "lexical",
+            Self::Semantic => "semantic",
+            Self::Hybrid => "hybrid",
+        }
+    }
+}
+
+#[derive(Deserialize, JsonSchema)]
 struct SearchArg {
     query: String,
     #[serde(default)]
     path: Option<String>,
+    /// Engine selection; defaults to hybrid.
+    #[serde(default)]
+    kind: Option<KindArg>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -394,6 +414,9 @@ struct MoveDirectoryArg {
 struct ReindexArg {
     #[serde(default)]
     path: Option<String>,
+    /// Engine selection; defaults to hybrid.
+    #[serde(default)]
+    kind: Option<KindArg>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -584,7 +607,7 @@ impl TabulariumMcp {
     }
 
     #[tool(
-        description = "Indexed full-text search across document bodies (JSON-RPC search); optional path limits subtree. For path/name in the tree use list_directory; for line-regex in one file use grep."
+        description = "Hybrid search with exact source excerpts and engine status. Optional kind=lexical|semantic|hybrid (default hybrid); path limits subtree or file. For path/name listing use list_directory; for line-regex use grep."
     )]
     async fn search(
         &self,
@@ -592,6 +615,10 @@ impl TabulariumMcp {
         Parameters(p): Parameters<SearchArg>,
     ) -> Result<String, String> {
         let mut m = Map::new();
+        m.insert("with_status".into(), json!(true));
+        if let Some(kind) = p.kind {
+            m.insert("kind".into(), json!(kind.as_str()));
+        }
         m.insert("query".into(), json!(p.query));
         if let Some(path) = p.path.filter(|s| !s.is_empty()) {
             m.insert("path".into(), json!(path));
@@ -949,7 +976,7 @@ impl TabulariumMcp {
     }
 
     #[tool(
-        description = "Rebuild search index (JSON-RPC reindex); optional path limits subtree. **Registered only when `mcp.full = true`.**"
+        description = "Rebuild selected search indexes (kind=lexical|semantic|hybrid, default hybrid); optional path limits subtree. **Registered only when `mcp.full = true`.**"
     )]
     async fn reindex(
         &self,
@@ -957,6 +984,9 @@ impl TabulariumMcp {
         Parameters(p): Parameters<ReindexArg>,
     ) -> Result<String, String> {
         let mut m = Map::new();
+        if let Some(kind) = p.kind {
+            m.insert("kind".into(), json!(kind.as_str()));
+        }
         if let Some(path) = p.path.filter(|s| !s.is_empty()) {
             m.insert("path".into(), json!(path));
         }
@@ -971,7 +1001,7 @@ impl ServerHandler for TabulariumMcp {
         let instructions = if self.mcp_full {
             "Tabularium MCP — **trusted FULL mode**. Same JSON-RPC semantics and authentication as POST /rpc (no alternate permission model). Includes destructive tools, identity (`whoami`), and ACL/PSK admin tools — plus the standard librarium surface. **Private / operator-controlled deployments only.**"
         } else {
-            "Tabularium MCP — fs-like librarium for machine spirits. Three rites: list_directory (tree walk / find-by-listing, rows carry modified_at), search (indexed full-text across bodies, file names, descriptions), grep (regex lines in one file). say_document for meetings (`from_id` = sender nickname). append_document is not for chat blocks. Destructive tools and ACL/PSK/`whoami` MCP tools are not registered unless `mcp.full = true` in server config; otherwise use CLI or REST."
+            "Tabularium MCP — fs-like librarium for machine spirits. Three rites: list_directory (tree walk / find-by-listing, rows carry modified_at), search (hybrid lexical/semantic across bodies, file names, descriptions), grep (regex lines in one file). say_document for meetings (`from_id` = sender nickname). append_document is not for chat blocks. Destructive tools and ACL/PSK/`whoami` MCP tools are not registered unless `mcp.full = true` in server config; otherwise use CLI or REST."
         };
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_instructions(instructions)

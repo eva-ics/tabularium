@@ -112,3 +112,11 @@ regular data backups, and monitoring for unusual activity.
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
+
+
+## Semantic and hybrid search
+
+Search and reindex accept `kind`: `lexical`, `semantic`, or `hybrid` (default).
+Optional `[semantic]` config enables OpenAI-compatible embeddings, including custom HTTP headers.
+The semantic sidecar is rebuilt without migrating the document database.
+See [semantic search](docs/semantic-search.md) for configuration, API status envelopes, upgrade steps, and fallback behavior.

@@ -203,15 +203,39 @@ impl Client {
         query: impl AsRef<str>,
         subtree: Option<&Path>,
     ) -> Result<Vec<SearchHitRow>> {
-        let params = match subtree {
-            None => json!({ "query": query.as_ref() }),
-            Some(p) => {
-                let ps = normalize_path_for_rpc(p)?;
-                json!({ "query": query.as_ref(), "path": ps })
+        Ok(self
+            .search_with_kind(query, subtree, crate::SearchKind::default())
+            .await?
+            .into_hits())
+    }
+
+    /// Search selected engines and retain degraded/partial status information.
+    pub async fn search_with_kind(
+        &self,
+        query: impl AsRef<str>,
+        subtree: Option<&Path>,
+        kind: crate::SearchKind,
+    ) -> Result<SearchReportRow> {
+        let mut params = json!({"query":query.as_ref(),"kind":kind,"with_status":true});
+        if let Some(path) = subtree {
+            params["path"] = json!(normalize_path_for_rpc(path)?);
+        }
+        let value = self.call("search", params).await?;
+        // Older servers return an array and do not expose engine status.
+        if value.is_array() {
+            if kind == crate::SearchKind::Semantic {
+                return Err(Error::Search(
+                    "server does not support explicit semantic search".into(),
+                ));
             }
-        };
-        let r = self.call("search", params).await?;
-        serde_json::from_value(r).map_err(|e| Error::InvalidInput(e.to_string()))
+            return Ok(SearchReportRow {
+                hits: serde_json::from_value(value)
+                    .map_err(|e| Error::InvalidInput(e.to_string()))?,
+                lexical_status: "ready".into(),
+                semantic_status: "unsupported".into(),
+            });
+        }
+        serde_json::from_value(value).map_err(|e| Error::InvalidInput(e.to_string()))
     }
 
     /// `exists` RPC — whether `path` resolves to an existing **file**.
@@ -649,14 +673,23 @@ impl Client {
 
     /// `reindex` RPC. `None` rebuilds the whole index from SQLite.
     pub async fn reindex(&self, path: Option<&Path>) -> Result<()> {
-        let params = match path {
-            None => json!({}),
-            Some(p) => {
-                let ps = normalize_path_for_rpc(p)?;
-                json!({ "path": ps })
-            }
-        };
-        self.call("reindex", params).await?;
+        self.reindex_with_kind(path, crate::SearchKind::default())
+            .await
+    }
+
+    /// Rebuild the selected engine(s); embedding a full corpus can take minutes.
+    pub async fn reindex_with_kind(
+        &self,
+        path: Option<&Path>,
+        kind: crate::SearchKind,
+    ) -> Result<()> {
+        let mut params = json!({"kind":kind});
+        if let Some(path) = path {
+            params["path"] = json!(normalize_path_for_rpc(path)?);
+        }
+        self.with_timeout(Duration::from_secs(3600))?
+            .call("reindex", params)
+            .await?;
         Ok(())
     }
 }
@@ -914,6 +947,28 @@ impl DocumentMetaRow {
     }
 }
 
+/// Search result with non-fatal engine availability information.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct SearchReportRow {
+    hits: Vec<SearchHitRow>,
+    lexical_status: String,
+    semantic_status: String,
+}
+impl SearchReportRow {
+    pub fn hits(&self) -> &[SearchHitRow] {
+        &self.hits
+    }
+    pub fn into_hits(self) -> Vec<SearchHitRow> {
+        self.hits
+    }
+    pub fn lexical_status(&self) -> &str {
+        &self.lexical_status
+    }
+    pub fn semantic_status(&self) -> &str {
+        &self.semantic_status
+    }
+}
+
 /// Search hit from `search`.
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct SearchHitRow {
@@ -923,9 +978,21 @@ pub struct SearchHitRow {
     score: f32,
     #[serde(default)]
     line_number: Option<usize>,
+    #[serde(default)]
+    line_end: Option<usize>,
+    #[serde(default)]
+    revision: Option<String>,
 }
 
 impl SearchHitRow {
+    /// Last source line in the excerpt, if provided by the server.
+    pub fn line_end(&self) -> Option<usize> {
+        self.line_end
+    }
+    /// Source revision, when the server supplied a versioned excerpt.
+    pub fn revision(&self) -> Option<&str> {
+        self.revision.as_deref()
+    }
     pub fn document_id(&self) -> EntryId {
         self.document_id
     }

@@ -12,10 +12,16 @@ use std::time::Duration;
 use clap::error::ErrorKind;
 use clap::{Parser, Subcommand};
 use tabularium::rpc::Client;
-use tabularium::{HeaderMap, TailMode, merge_header_line, merge_into, parse_tb_headers_env};
+use tabularium::{
+    HeaderMap, SearchKind, TailMode, merge_header_line, merge_into, parse_tb_headers_env,
+};
 
 fn parse_cli_tail_mode(s: &str) -> Result<TailMode, clap::Error> {
     TailMode::parse_cli_token(s).map_err(|msg| clap::Error::raw(ErrorKind::ValueValidation, msg))
+}
+
+fn parse_search_kind(s: &str) -> Result<SearchKind, String> {
+    s.parse().map_err(|e: tabularium::Error| e.to_string())
 }
 
 fn effective_auth_key(cli: &Cli) -> Option<String> {
@@ -242,9 +248,13 @@ pub(crate) enum Command {
         #[arg(short = 'f', long)]
         force: bool,
     },
-    /// Rebuild Tantivy: `/` = full rebuild, or one directory path for scoped reindex.
+    /// Rebuild search indexes: lexical (Tantivy), semantic, or hybrid (both, default).
     Reindex {
+        /// Search engine(s): lexical, semantic, hybrid.
+        #[arg(long,default_value="hybrid",value_parser=parse_search_kind)]
+        kind: SearchKind,
         /// `/` or directory path.
+        #[arg(default_value = "/")]
         path: String,
     },
     /// Remove file(s) (`DIR/FILE` or `DIR/GLOB`) or director(ies) (`DIR` or glob); `-r` only for directory paths.
@@ -253,8 +263,11 @@ pub(crate) enum Command {
         recursive: bool,
         path: String,
     },
-    /// Indexed full-text search across document body, file name, and description (`search` RPC; path substring walk — use `find`; line-regex — use `grep`).
+    /// Hybrid lexical/semantic search (`search` RPC; path walk: `find`; line-regex: `grep`).
     Search {
+        /// Search engine(s): lexical, semantic, hybrid.
+        #[arg(long,default_value="hybrid",value_parser=parse_search_kind)]
+        kind: SearchKind,
         /// Limit hits to this directory subtree.
         #[arg(short = 'd', long = "directory")]
         directory: Option<String>,
@@ -346,6 +359,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
 #[cfg(test)]
 mod cli_parse_tests {
+    #[test]
+    fn search_and_reindex_share_engine_selection_defaults() {
+        use super::{Cli, Command, SearchKind};
+        use clap::Parser;
+        let cli =
+            Cli::try_parse_from(["tb", "search", "--kind", "semantic", "restore files"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Search {
+                kind: SearchKind::Semantic,
+                ..
+            }
+        ));
+        let cli = Cli::try_parse_from(["tb", "reindex"]).unwrap();
+        assert!(
+            matches!(cli.command, Command::Reindex { kind: SearchKind::Hybrid, ref path } if path == "/")
+        );
+        assert!(Cli::try_parse_from(["tb", "search", "--kind", "bogus", "query"]).is_err());
+    }
+
     use super::*;
 
     #[test]
