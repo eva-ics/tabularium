@@ -889,6 +889,9 @@ pub(crate) async fn execute(
             directory,
             query,
             kind,
+            limit,
+            max_output_bytes,
+            json,
         } => {
             let q = query.join(" ");
             if q.is_empty() {
@@ -901,7 +904,13 @@ pub(crate) async fn execute(
                 }
             };
             let report = client
-                .search_with_kind(&q, dir.as_deref().map(std::path::Path::new), kind)
+                .search_bounded(
+                    &q,
+                    dir.as_deref().map(std::path::Path::new),
+                    kind,
+                    limit,
+                    max_output_bytes,
+                )
                 .await?;
             if !matches!(
                 report.semantic_status(),
@@ -914,6 +923,15 @@ pub(crate) async fn execute(
             }
             if report.lexical_status() == "unavailable" {
                 eprintln!("search: lexical unavailable; semantic results only");
+            }
+            if json {
+                println!("{}", serde_json::to_string(&report)?);
+                return Ok(ExecuteOutcome::Ok);
+            }
+            if report.truncated() {
+                eprintln!(
+                    "search: output truncated; narrow the query or increase limit/max-output-bytes"
+                );
             }
             let hits = report.into_hits();
             if use_ansi_stdout() {
@@ -1034,11 +1052,17 @@ pub(crate) async fn execute(
             return cmd_ec(client, &path, opts).await;
         }
         Command::Slice {
-            path, start, end, ..
+            path,
+            start,
+            end,
+            expected_revision,
+            ..
         } => {
             let path =
                 normalize_user_path(path.trim()).map_err(|e| -> BoxErr { e.to_string().into() })?;
-            let t = client.document_slice(&path, start, end).await?;
+            let t = client
+                .document_slice_checked(&path, start, end, expected_revision.as_deref())
+                .await?;
             if shell_pager_if_tall(ctx, &t)? {
                 return Ok(ExecuteOutcome::Ok);
             }

@@ -214,6 +214,10 @@ struct SearchQuery {
     kind: SearchKind,
     #[serde(default)]
     with_status: bool,
+    #[serde(default)]
+    limit: Option<usize>,
+    #[serde(default)]
+    max_output_bytes: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -226,6 +230,10 @@ struct SearchPostBody {
     kind: SearchKind,
     #[serde(default)]
     with_status: bool,
+    #[serde(default)]
+    limit: Option<usize>,
+    #[serde(default)]
+    max_output_bytes: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -562,16 +570,55 @@ fn search_auth_context(auth: &RequestAuth) -> Option<&tabularium::AuthContext> {
     }
 }
 
-fn search_wire(report: &SearchReport, with_status: bool) -> Value {
-    let hits: Vec<Value> = report.hits().iter().map(|h| json!({
-        "document_id": h.document_id().raw(), "path": h.path(), "snippet": h.snippet(),
-        "score": h.score(), "line_number": h.line_number(), "line_end": h.line_end(), "revision": h.revision(),
-    })).collect();
-    if with_status {
-        json!({"hits": hits, "lexical_status":report.lexical_status(),"semantic_status":report.semantic_status()})
-    } else {
-        Value::Array(hits)
+/// Budget counts compact UTF-8 JSON for the search payload, not transport/RPC framing.
+fn search_bounds(limit: Option<usize>, bytes: Option<usize>) -> tabularium::Result<(usize, usize)> {
+    let limit = limit.unwrap_or(SEARCH_LIMIT);
+    let bytes = bytes.unwrap_or(65_536);
+    if !(1..=SEARCH_LIMIT).contains(&limit) || !(512..=1_048_576).contains(&bytes) {
+        return Err(Error::InvalidInput(
+            "limit must be 1..256; max_output_bytes must be 512..1048576".into(),
+        ));
     }
+    Ok((limit, bytes))
+}
+fn search_wire(report: &SearchReport, with_status: bool, budget: usize) -> (Value, bool) {
+    let envelope = |hits: Vec<Value>, truncated: bool| {
+        if with_status {
+            json!({"hits": hits, "lexical_status":report.lexical_status(),"semantic_status":report.semantic_status(),
+                "has_more":truncated,"truncated":truncated})
+        } else {
+            Value::Array(hits)
+        }
+    };
+    let overhead = serde_json::to_vec(&envelope(Vec::new(), false))
+        .expect("JSON value")
+        .len();
+    let mut used = overhead;
+    let mut hits = Vec::new();
+    let mut truncated = report.has_more();
+    for h in report.hits() {
+        let hit = json!({"document_id":h.document_id().raw(),"path":h.path(),"snippet":h.snippet(),
+            "score":h.score(),"line_number":h.line_number(),"start_line":h.start_line(),"end_line":h.line_end(),"line_end":h.line_end(),
+            "revision":h.revision(),"modified_at":h.modified_at()});
+        let size =
+            serde_json::to_vec(&hit).expect("JSON value").len() + usize::from(!hits.is_empty());
+        if used + size > budget {
+            truncated = true;
+            break;
+        }
+        used += size;
+        hits.push(hit);
+    }
+    (envelope(hits, truncated), truncated)
+}
+fn optional_search_usize(m: &Map<String, Value>, key: &str) -> tabularium::Result<Option<usize>> {
+    m.get(key)
+        .map(|v| {
+            v.as_u64()
+                .and_then(|n| usize::try_from(n).ok())
+                .ok_or_else(|| Error::InvalidInput(format!("{key} must be a nonnegative integer")))
+        })
+        .transpose()
 }
 
 async fn search_get(
@@ -580,7 +627,17 @@ async fn search_get(
     headers: HeaderMap,
 ) -> ApiResult<Response> {
     let auth = api_resolve_auth(&st, &headers).await?;
-    search_inner(&st, &auth, &q.q, q.dir.as_deref(), q.kind, q.with_status).await
+    search_inner(
+        &st,
+        &auth,
+        &q.q,
+        q.dir.as_deref(),
+        q.kind,
+        q.with_status || q.limit.is_some() || q.max_output_bytes.is_some(),
+        q.limit,
+        q.max_output_bytes,
+    )
+    .await
 }
 
 async fn search_post(
@@ -602,7 +659,9 @@ async fn search_post(
         let values: Map<String, Value> = fields
             .into_iter()
             .map(|(k, v)| {
-                let value = if k == "with_status" {
+                let value = if k == "limit" || k == "max_output_bytes" {
+                    v.parse::<u64>().map_or(Value::String(v), |n| json!(n))
+                } else if k == "with_status" {
                     match v.as_str() {
                         "true" => Value::Bool(true),
                         "false" => Value::Bool(false),
@@ -622,7 +681,17 @@ async fn search_post(
     } else {
         serde_json::from_slice(&body).map_err(|e| ApiError(Error::InvalidInput(e.to_string())))?
     };
-    search_inner(&st, &auth, &b.q, b.dir.as_deref(), b.kind, b.with_status).await
+    search_inner(
+        &st,
+        &auth,
+        &b.q,
+        b.dir.as_deref(),
+        b.kind,
+        b.with_status || b.limit.is_some() || b.max_output_bytes.is_some(),
+        b.limit,
+        b.max_output_bytes,
+    )
+    .await
 }
 
 async fn search_inner(
@@ -632,7 +701,10 @@ async fn search_inner(
     dir_prefix: Option<&str>,
     kind: SearchKind,
     with_status: bool,
+    limit: Option<usize>,
+    max_output_bytes: Option<usize>,
 ) -> ApiResult<Response> {
+    let (limit, budget) = search_bounds(limit, max_output_bytes).map_err(ApiError)?;
     let scope = if let Some(d) = dir_prefix {
         let n = normalize_path_for_rpc(d).map_err(ApiError)?;
         canonical_path_segments(&n).map_err(ApiError)?;
@@ -646,9 +718,14 @@ async fn search_inner(
     let (dp, only) = scope.directory_prefix_and_restrict();
     let report = st
         .db
-        .search_report(q, dp, SEARCH_LIMIT, only, kind, search_auth_context(auth))
+        .search_report(q, dp, limit, only, kind, search_auth_context(auth))
         .await?;
-    let mut response = Json(search_wire(&report, with_status)).into_response();
+    let (payload, truncated) = search_wire(&report, with_status, budget);
+    let mut response = Json(payload).into_response();
+    response.headers_mut().insert(
+        "x-tabularium-search-truncated",
+        HeaderValue::from_static(if truncated { "true" } else { "false" }),
+    );
     response.headers_mut().insert(
         "x-tabularium-lexical-status",
         HeaderValue::from_str(report.lexical_status()).expect("static status"),
@@ -1294,18 +1371,17 @@ pub(crate) async fn dispatch_app_rpc(
                     return Err(Error::InvalidInput("with_status must be boolean".into()).into());
                 }
             };
+            let (limit, budget) = search_bounds(
+                optional_search_usize(&m, "limit")?,
+                optional_search_usize(&m, "max_output_bytes")?,
+            )?;
+            let with_status =
+                with_status || m.contains_key("limit") || m.contains_key("max_output_bytes");
             let report = st
                 .db
-                .search_report(
-                    q,
-                    dp,
-                    SEARCH_LIMIT,
-                    restrict_doc,
-                    kind,
-                    search_auth_context(auth),
-                )
+                .search_report(q, dp, limit, restrict_doc, kind, search_auth_context(auth))
                 .await?;
-            Ok(search_wire(&report, with_status))
+            Ok(search_wire(&report, with_status, budget).0)
         }
         "reindex" => {
             require_mgmt_admin(auth).map_err(RpcAppError::Other)?;
@@ -1352,8 +1428,12 @@ pub(crate) async fn dispatch_app_rpc(
             let end = get_slice_line(&m, "end_line", "to_line")?;
             check_read(auth, &path).map_err(RpcAppError::Other)?;
             let fid = st.db.resolve_existing_file_path(&path).await?;
-            let text = st.db.document_slice(fid, start, end).await?;
-            Ok(json!({ "text": text }))
+            let expected = get_optional_uuid_str(&m, "expected_revision")?;
+            let (text, revision) = st
+                .db
+                .document_slice_versioned(fid, start, end, expected.as_deref())
+                .await?;
+            Ok(json!({ "text": text, "revision": revision }))
         }
         "grep" => {
             let path = rpc_path(&m, "path")?;

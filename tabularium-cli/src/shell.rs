@@ -1437,11 +1437,13 @@ pub(crate) fn apply_shell_cwd(cmd: Command, shell_cwd: Option<&str>) -> Result<C
             start,
             end,
             raw,
+            expected_revision,
         } => Command::Slice {
             path: resolve_shell_doc_path(&path, shell_cwd)?,
             start,
             end,
             raw,
+            expected_revision,
         },
         Command::Grep {
             pattern,
@@ -1483,7 +1485,13 @@ pub(crate) fn apply_shell_cwd(cmd: Command, shell_cwd: Option<&str>) -> Result<C
             directory,
             query,
             kind,
+            limit,
+            max_output_bytes,
+            json,
         } => Command::Search {
+            json,
+            limit,
+            max_output_bytes,
             kind,
             directory: match directory {
                 None => None,
@@ -2358,6 +2366,7 @@ mod shell_cwd_tests {
             ),
             (
                 Command::Slice {
+                    expected_revision: None,
                     path: "d".into(),
                     start: 1,
                     end: 2,
@@ -2452,6 +2461,9 @@ mod shell_cwd_tests {
     fn search_directory_optional_strips_leading_slash() {
         let s = unwrap_ac(
             Command::Search {
+                json: false,
+                limit: None,
+                max_output_bytes: None,
                 kind: Default::default(),
                 directory: None,
                 query: vec!["q".into()],
@@ -2468,6 +2480,9 @@ mod shell_cwd_tests {
         ));
         let s2 = unwrap_ac(
             Command::Search {
+                json: false,
+                limit: None,
+                max_output_bytes: None,
                 kind: Default::default(),
                 directory: Some("/notes".into()),
                 query: vec!["q".into()],
@@ -2477,6 +2492,9 @@ mod shell_cwd_tests {
         assert!(matches!(s2, Command::Search { directory: Some(ref x), .. } if x == "notes"));
         let s3 = unwrap_ac(
             Command::Search {
+                json: false,
+                limit: None,
+                max_output_bytes: None,
                 kind: Default::default(),
                 directory: Some("/".into()),
                 query: vec!["q".into()],
@@ -2490,6 +2508,9 @@ mod shell_cwd_tests {
     fn search_dot_directory_resolves_cwd() {
         let s = unwrap_ac(
             Command::Search {
+                json: false,
+                limit: None,
+                max_output_bytes: None,
                 kind: Default::default(),
                 directory: Some(".".into()),
                 query: vec!["q".into()],
@@ -2734,6 +2755,7 @@ mod shell_cwd_tests {
             ),
             (
                 Command::Slice {
+                    expected_revision: None,
                     path: "/c/d".into(),
                     start: 1,
                     end: 2,

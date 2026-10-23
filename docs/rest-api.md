@@ -70,3 +70,13 @@ Search and reindex accept `kind`: `lexical`, `semantic`, or `hybrid` (default).
 Optional `[semantic]` config enables OpenAI-compatible embeddings, including custom HTTP headers.
 The semantic sidecar is rebuilt without migrating the document database.
 See [semantic search](semantic-search.md) for configuration, API status envelopes, upgrade steps, and fallback behavior.
+
+## Bounded search
+
+Search accepts `limit` (1..256, default 256) and `max_output_bytes` (512..1048576, default 65536) in GET parameters or POST JSON/form. The byte budget covers compact UTF-8 search JSON, not HTTP/JSON-RPC/MCP wrappers. Whole hits are omitted to fit, never rewritten or cut mid-quote. An oversized hit can yield zero hits with truncation.
+
+Either bound opts into `{hits, lexical_status, semantic_status, has_more, truncated}`. `with_status=true` also opts in. Without them the legacy hit array remains; REST exposes omission through `x-tabularium-search-truncated`. Omission flags are ACL/path filtered and do not promise pagination or a total count. Engine availability remains a separate status.
+
+Hits include `path`, `snippet`, `revision`, `modified_at` (Unix nanoseconds), `start_line`/`end_line`, and backward-compatible `line_number` (match line)/`line_end` (excerpt end). Lines are inclusive and 1-based. Lexical excerpts contain at most 768 UTF-8 source bytes, and can begin/end mid-line; semantic chunks follow configuration. Search ranks by relevance with deterministic tie-breaking. Technical modification dates do not imply truth/currentness.
+
+RPC/MCP `slice` accepts `expected_revision` and returns `{text, revision}`. Stale or concurrently changed source yields `RevisionMismatch` (-32003). No atomicity is promised between search and slice. CLI equivalents: `tb search --kind hybrid --limit 10 --max-output-bytes 16384 --json query` and `tb slice /path 1 10 --expected-revision UUID`. No schema migration or reindex is needed.

@@ -93,7 +93,7 @@ append_document — path, content, force (default false). Create new document, o
 append_if_not_contains — path, marker, content: atomically append `content` only if `marker` is **not** already a substring of the UTF-8 body (Rust `str::contains`; e.g. marker `DONE` matches inside `UNDONE`). **Document must exist** (errors if missing). Returns JSON `{ "appended": bool, "revision": string }`.
 say_document — path, from_id (sender nickname), content. **Preferred for meetings, conversations, and task documents** — server appends a markdown block with the sender in the heading. **Do not prefix the nickname into content**; provide it via from_id only. **Target file must already exist** (use put_document or append_document to create). *Exempt from the `force` guard by design*: `say_document` is the only mutation operation that always appends to an existing document, because it cannot create new documents and operates exclusively on conversation/meeting contexts where appending is the intended action.
 list_directory — path optional (omit or empty for root `/`). Rows include modified_at and `revision` (files only); use this to walk the tree; there is no separate MCP find tool.
-search — query, path optional (subtree filter), kind optional: lexical|semantic|hybrid (default hybrid). Combines Tantivy over bodies/names/descriptions with optional semantic body excerpts; returns engine status.
+search — query, path optional (subtree filter), kind optional: lexical|semantic|hybrid (default hybrid). Combines Tantivy over bodies/names/descriptions with optional semantic body excerpts; returns engine status, has_more/truncated, revision, modified_at and exact excerpt line ranges. Optional limit (1..256) and max_output_bytes (512..1048576) bound the response.
 create_directory — path, description optional, parents optional (`true` = POSIX `mkdir -p`; default `false`).
 describe — path; optional description string (omit to read; empty string clears).
 document_exists — path (wire RPC name `exists`; tests file only).
@@ -307,6 +307,12 @@ struct SearchArg {
     /// Engine selection; defaults to hybrid.
     #[serde(default)]
     kind: Option<KindArg>,
+    /// Maximum results, 1..256 (default 256).
+    #[serde(default)]
+    limit: Option<usize>,
+    /// Compact UTF-8 JSON payload budget, 512..1048576 (default 65536).
+    #[serde(default)]
+    max_output_bytes: Option<usize>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -366,6 +372,9 @@ struct SliceArg {
     start_line: LooseNat,
     #[serde(alias = "to_line")]
     end_line: LooseNat,
+    /// Assert the revision returned by search; mismatch returns RevisionMismatch.
+    #[serde(default)]
+    expected_revision: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -607,7 +616,7 @@ impl TabulariumMcp {
     }
 
     #[tool(
-        description = "Hybrid search with exact source excerpts and engine status. Optional kind=lexical|semantic|hybrid (default hybrid); path limits subtree or file. For path/name listing use list_directory; for line-regex use grep."
+        description = "Hybrid search with exact source excerpts, revision, modified_at and engine status. Optional limit and max_output_bytes bound the payload; has_more/truncated explicitly mark omitted hits. Optional kind=lexical|semantic|hybrid (default hybrid); path limits subtree or file. For path/name listing use list_directory; for line-regex use grep."
     )]
     async fn search(
         &self,
@@ -616,6 +625,12 @@ impl TabulariumMcp {
     ) -> Result<String, String> {
         let mut m = Map::new();
         m.insert("with_status".into(), json!(true));
+        if let Some(n) = p.limit {
+            m.insert("limit".into(), json!(n));
+        }
+        if let Some(n) = p.max_output_bytes {
+            m.insert("max_output_bytes".into(), json!(n));
+        }
         if let Some(kind) = p.kind {
             m.insert("kind".into(), json!(kind.as_str()));
         }
@@ -730,7 +745,7 @@ impl TabulariumMcp {
     }
 
     #[tool(
-        description = "Inclusive 1-based line range (JSON-RPC slice). `start_line`/`end_line` or `from_line`/`to_line`; number or string integer."
+        description = "Inclusive 1-based line range (JSON-RPC slice). Optional expected_revision detects source changes; returns text and revision. `start_line`/`end_line` or `from_line`/`to_line`; number or string integer."
     )]
     async fn slice(
         &self,
@@ -744,6 +759,7 @@ impl TabulariumMcp {
             "slice",
             json!({
                 "path": p.path,
+                "expected_revision": p.expected_revision,
                 "start_line": start,
                 "end_line": end,
             }),

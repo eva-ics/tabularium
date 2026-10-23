@@ -265,6 +265,15 @@ pub(crate) enum Command {
     },
     /// Hybrid lexical/semantic search (`search` RPC; path walk: `find`; line-regex: `grep`).
     Search {
+        /// Print the complete structured report including revisions and truncation status.
+        #[arg(long)]
+        json: bool,
+        /// Maximum results (1..256; default 256).
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Maximum compact JSON search payload bytes (512..1048576; default 65536).
+        #[arg(long)]
+        max_output_bytes: Option<usize>,
         /// Search engine(s): lexical, semantic, hybrid.
         #[arg(long,default_value="hybrid",value_parser=parse_search_kind)]
         kind: SearchKind,
@@ -284,6 +293,9 @@ pub(crate) enum Command {
     },
     /// Inclusive 1-based line slice.
     Slice {
+        /// Assert the revision returned by search.
+        #[arg(long)]
+        expected_revision: Option<String>,
         path: String,
         start: u32,
         end: u32,

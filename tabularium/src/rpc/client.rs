@@ -216,7 +216,25 @@ impl Client {
         subtree: Option<&Path>,
         kind: crate::SearchKind,
     ) -> Result<SearchReportRow> {
+        self.search_bounded(query, subtree, kind, None, None).await
+    }
+
+    /// Bounded search; the server reports omitted results explicitly.
+    pub async fn search_bounded(
+        &self,
+        query: impl AsRef<str>,
+        subtree: Option<&Path>,
+        kind: crate::SearchKind,
+        limit: Option<usize>,
+        max_output_bytes: Option<usize>,
+    ) -> Result<SearchReportRow> {
         let mut params = json!({"query":query.as_ref(),"kind":kind,"with_status":true});
+        if let Some(n) = limit {
+            params["limit"] = json!(n);
+        }
+        if let Some(n) = max_output_bytes {
+            params["max_output_bytes"] = json!(n);
+        }
         if let Some(path) = subtree {
             params["path"] = json!(normalize_path_for_rpc(path)?);
         }
@@ -233,6 +251,8 @@ impl Client {
                     .map_err(|e| Error::InvalidInput(e.to_string()))?,
                 lexical_status: "ready".into(),
                 semantic_status: "unsupported".into(),
+                has_more: false,
+                truncated: false,
             });
         }
         serde_json::from_value(value).map_err(|e| Error::InvalidInput(e.to_string()))
@@ -520,9 +540,21 @@ impl Client {
         start_line: u32,
         end_line: u32,
     ) -> Result<String> {
+        self.document_slice_checked(path, start_line, end_line, None)
+            .await
+    }
+
+    pub async fn document_slice_checked(
+        &self,
+        path: impl AsRef<Path>,
+        start_line: u32,
+        end_line: u32,
+        expected_revision: Option<&str>,
+    ) -> Result<String> {
         let path = normalize_path_for_rpc(path)?;
         let params = json!({
             "path": path,
+            "expected_revision": expected_revision,
             "start_line": start_line,
             "end_line": end_line,
         });
@@ -948,13 +980,23 @@ impl DocumentMetaRow {
 }
 
 /// Search result with non-fatal engine availability information.
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct SearchReportRow {
     hits: Vec<SearchHitRow>,
     lexical_status: String,
     semantic_status: String,
+    #[serde(default)]
+    has_more: bool,
+    #[serde(default)]
+    truncated: bool,
 }
 impl SearchReportRow {
+    pub fn has_more(&self) -> bool {
+        self.has_more
+    }
+    pub fn truncated(&self) -> bool {
+        self.truncated
+    }
     pub fn hits(&self) -> &[SearchHitRow] {
         &self.hits
     }
@@ -982,9 +1024,19 @@ pub struct SearchHitRow {
     line_end: Option<usize>,
     #[serde(default)]
     revision: Option<String>,
+    #[serde(default)]
+    modified_at: Option<Timestamp>,
+    #[serde(default)]
+    start_line: Option<usize>,
 }
 
 impl SearchHitRow {
+    pub fn start_line(&self) -> Option<usize> {
+        self.start_line.or(self.line_number)
+    }
+    pub fn modified_at(&self) -> Option<Timestamp> {
+        self.modified_at
+    }
     /// Last source line in the excerpt, if provided by the server.
     pub fn line_end(&self) -> Option<usize> {
         self.line_end

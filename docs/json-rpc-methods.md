@@ -86,3 +86,5 @@ Search and reindex accept `kind`: `lexical`, `semantic`, or `hybrid` (default).
 Optional `[semantic]` config enables OpenAI-compatible embeddings, including custom HTTP headers.
 The semantic sidecar is rebuilt without migrating the document database.
 See [semantic search](semantic-search.md) for configuration, API status envelopes, upgrade steps, and fallback behavior.
+
+Bounded search and revision-checked `slice`: see [P1 contract](rest-api.md#bounded-search). `search` adds optional `limit`/`max_output_bytes`; `slice` adds optional `expected_revision`.

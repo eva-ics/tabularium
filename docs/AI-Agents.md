@@ -118,3 +118,7 @@ Read back the updated meeting:
 ```
 
 In MCP tool terms, that sequence is: `put_document`, `say_document`, `search`, then `get_document`.
+
+## Compact, versioned search
+
+Use `search` with `limit: 10`, `max_output_bytes: 16384` and optional `kind`. Inspect `has_more`/`truncated` independently of engine status. Each hit carries exact source text, containing line range, revision and technical modification time. Follow with `slice` using the returned `expected_revision`; on `RevisionMismatch` search again. Dates do not establish whether a statement is current. See [search API details](rest-api.md#bounded-search).

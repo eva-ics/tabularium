@@ -63,6 +63,9 @@ def test_code_preview_preserves_source_and_raw_toggle(selenium_driver, tabulariu
     ("payload.json", "text/x-shellscript", "bash"),
     ("payload.sh", "text/markdown", "markdown"),
     ("payload.unknown", None, "markdown"),
+    ("payload.txt", None, "text"),
+    ("payload.list", None, "text"),
+    ("payload.md", "text/plain", "text"),
 ])
 def test_preview_mime_precedence_and_markdown_default(selenium_driver, tabularium_base_url, name, mime, expected):
     d = selenium_driver

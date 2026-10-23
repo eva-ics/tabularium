@@ -13,8 +13,12 @@ pub struct SearchReport {
     hits: Vec<SearchHit>,
     lexical_status: &'static str,
     semantic_status: &'static str,
+    has_more: bool,
 }
 impl SearchReport {
+    pub fn has_more(&self) -> bool {
+        self.has_more
+    }
     pub fn hits(&self) -> &[SearchHit] {
         &self.hits
     }
@@ -222,6 +226,10 @@ impl<S: Storage> Database<S> {
                     "semantic source offsets invalid; reindex required".into(),
                 ));
             };
+            let meta = self.storage.get_file_meta(EntryId::from(c.id)).await?;
+            if meta.revision() != Some(doc.revision.as_str()) || meta.canonical_path() != doc.path {
+                continue;
+            }
             hits.push(
                 SearchHit::new(
                     EntryId::from(c.id),
@@ -230,7 +238,8 @@ impl<S: Storage> Database<S> {
                     c.score,
                     Some(c.line_start),
                 )
-                .with_source(doc.revision, c.line_end),
+                .with_source(doc.revision, c.line_end)
+                .with_modified_at(meta.modified_at()),
             );
             seen.insert(c.id);
             if hits.len() >= limit {
@@ -249,17 +258,14 @@ impl<S: Storage> Database<S> {
         kind: SearchKind,
         auth: Option<&AuthContext>,
     ) -> Result<SearchReport> {
+        let requested_limit = limit;
+        let limit = limit.saturating_add(1);
         let lexical = async {
             if kind == SearchKind::Semantic {
                 return Ok(Vec::new());
             }
-            let candidate_limit = if auth.is_some() { usize::MAX } else { limit };
-            let hits = self.search_hits(query, path, candidate_limit, only).await?;
-            Ok(hits
-                .into_iter()
-                .filter(|h| auth.is_none_or(|a| a.check_read_abs(h.path()).is_ok()))
-                .take(limit)
-                .collect::<Vec<_>>())
+            self.search_hits_authorized(query, path, limit, only, auth)
+                .await
         };
         let semantic = async {
             if kind == SearchKind::Lexical || self.semantic.is_none() {
@@ -317,7 +323,7 @@ impl<S: Storage> Database<S> {
                 Vec::new()
             }
         };
-        let hits = if kind == SearchKind::Semantic {
+        let mut hits = if kind == SearchKind::Semantic {
             sem
         } else if kind == SearchKind::Lexical || sem.is_empty() {
             lex
@@ -347,7 +353,10 @@ impl<S: Storage> Database<S> {
             all.truncate(limit);
             all
         };
+        let has_more = hits.len() > requested_limit;
+        hits.truncate(requested_limit);
         Ok(SearchReport {
+            has_more,
             hits,
             lexical_status,
             semantic_status,

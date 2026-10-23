@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Adds bounded, versioned search with limit, JSON byte budget, explicit omission
+  flags, exact excerpts, revision and modification time across RPC/REST/MCP/CLI.
+- Adds revision-checked slice reads and CLI structured search output.
+- Adds plain-text previews for .txt/.list and removes themed interface/help copy.
+
 - Adds a Web UI search-kind selector and source-preserving JSON/shell previews
   with stored MIME precedence, extension fallback, and Markdown default.
 

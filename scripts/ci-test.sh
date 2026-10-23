@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sacred integration workflow (invoked by `just ci-test`):
+# Remote integration workflow (invoked by `just ci-test`):
 #   1. rsync tree → root@${CI_HOST}:/opt/${CI_PROJECT} (excludes target/, .git/)
 #   2. Remote: deps + `npm ci && npm run build` in ui/; then cargo build --workspace --release
 #   3. Best-effort: free CI_LISTEN port (fuser/lsof) so no stray server blocks the bind

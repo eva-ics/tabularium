@@ -70,8 +70,10 @@ pub struct SearchHit {
     snippet: String,
     score: f32,
     line_number: Option<usize>,
+    start_line: Option<usize>,
     line_end: Option<usize>,
     revision: Option<String>,
+    modified_at: Option<Timestamp>,
 }
 
 impl SearchHit {
@@ -88,15 +90,33 @@ impl SearchHit {
             snippet,
             score,
             line_number,
+            start_line: line_number,
             line_end: line_number,
             revision: None,
+            modified_at: None,
         }
+    }
+
+    pub fn start_line(&self) -> Option<usize> {
+        self.start_line
+    }
+    pub(crate) fn with_line_start(mut self, line: usize) -> Self {
+        self.start_line = Some(line);
+        self
     }
 
     pub(crate) fn with_source(mut self, revision: String, line_end: usize) -> Self {
         self.revision = Some(revision);
         self.line_end = Some(line_end);
         self
+    }
+
+    pub(crate) fn with_modified_at(mut self, value: Timestamp) -> Self {
+        self.modified_at = Some(value);
+        self
+    }
+    pub fn modified_at(&self) -> Option<Timestamp> {
+        self.modified_at
     }
 
     pub(crate) fn set_score(&mut self, score: f32) {
