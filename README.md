@@ -15,7 +15,7 @@ UI, CLI, REST, JSON-RPC, MCP, or the Rust library.
 - Stores documents in SQLite with Tantivy-backed search.
 - Lets you browse, edit, append, search, and export documents as a tree.
 - Serves the same data through an embedded web UI, HTTP APIs, MCP, and `tb`.
-- Supports meeting and chat-style document workflows for humans and machine spirits alike.
+- Supports meeting and chat-style document workflows for people and AI agents alike.
 
 ## Workspace
 

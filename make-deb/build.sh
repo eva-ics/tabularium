@@ -76,7 +76,7 @@ Architecture: $DEB_ARCH
 Maintainer: Tabularium Maintainers <tabularium@localhost>
 Depends: libc6 (>= 2.31), adduser, tabularium-cli (= $VERSION), systemd | systemd-sysv
 Description: Tabularium HTTP server (REST, JSON-RPC, MCP)
- Machine-spirit gateway for the Tabularium document store.
+ HTTP gateway for the Tabularium document store.
 EOF
 
 dpkg-deb --root-owner-group --build "$stage_srv" "$OUT/tabularium-server_${VERSION}_${DEB_ARCH}.deb"

@@ -1,4 +1,4 @@
-//! `tabularium-server` — Axum REST + JSON-RPC for the librarium.
+//! `tabularium-server` — Axum REST + JSON-RPC for the document store.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -228,7 +228,7 @@ async fn run(cfg: config::Config) -> Result<(), Box<dyn std::error::Error + Send
                 }
             };
             if term.recv().await.is_some() {
-                tracing::info!("SIGTERM received; closing listeners for the Throne");
+                tracing::info!("SIGTERM received; closing listeners for access control");
                 shutdown_sig.cancel();
             }
         }
@@ -237,7 +237,7 @@ async fn run(cfg: config::Config) -> Result<(), Box<dyn std::error::Error + Send
     tokio::spawn(async move {
         match tokio::signal::ctrl_c().await {
             Ok(()) => {
-                tracing::info!("shutdown signal received; closing listeners for the Throne");
+                tracing::info!("shutdown signal received; closing listeners for access control");
                 shutdown_sig.cancel();
             }
             Err(e) => tracing::warn!(error = %e, "ctrl_c listener failed"),
@@ -245,7 +245,7 @@ async fn run(cfg: config::Config) -> Result<(), Box<dyn std::error::Error + Send
     });
 
     let listener = TcpListener::bind(&cfg.server.listen).await?;
-    tracing::info!(listen = %cfg.server.listen, "tabularium-server bound; praise the Omnissiah");
+    tracing::info!(listen = %cfg.server.listen, "tabularium-server listening");
     axum::serve(listener, app)
         .with_graceful_shutdown({
             let shutdown = shutdown.clone();

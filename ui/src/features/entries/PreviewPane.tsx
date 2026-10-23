@@ -475,7 +475,7 @@ export const PreviewPane = forwardRef<HTMLDivElement, PreviewPaneProps>(
             </p>
           ) : null}
           {!loading && !error && content === null ? (
-            <p className={styles.empty}>Select a file — the Emperor watches.</p>
+            <p className={styles.empty}>Select a file to preview.</p>
           ) : null}
           {editMode && pathLabel !== null ? (
             <div className={styles.editArea}>

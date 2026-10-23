@@ -175,7 +175,7 @@ function pageMoveIndex(
 /**
  * When the preview pane is active, arrow/page keys should scroll the document viewport if
  * focus is on the preview body, or on `document.body` / `<html>` (e.g. Selenium `body.send_keys`),
- * but not on sort buttons or other controls (Ferrum / machine-spirit rites).
+ * but not on sort buttons or other controls (keyboard navigation).
  */
 function libraryKeysScrollPreviewViewport(
   focusPane: "tree" | "preview",
@@ -260,7 +260,7 @@ export function EntriesView() {
   entrySortRef.current = entrySort;
 
   const [queryInput, setQueryInput] = useState("");
-  /** Committed query — API runs only after Enter (Enginseer heresy A). */
+  /** Committed query — API runs only after Enter. */
   const [firedQuery, setFiredQuery] = useState("");
   const [searchHits, setSearchHits] = useState<SearchHit[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -1566,7 +1566,7 @@ export function EntriesView() {
             ref={searchInputRef}
             type="text"
             className={styles.searchInput}
-            placeholder="Query the librarium…"
+            placeholder="Search documents…"
             autoComplete="off"
             aria-label="Search query"
             value={queryInput}

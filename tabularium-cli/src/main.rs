@@ -99,7 +99,7 @@ pub(crate) enum Command {
     #[command(name = "acl-list")]
     AclList,
     /// Append to a document (`DIR/FILE`). Default safe: errors with `Duplicate` if the
-    /// document already exists; pass `--force` to deliberately append to an existing scroll.
+    /// document already exists; pass `--force` to deliberately append to an existing document.
     Append {
         path: String,
         file: Option<String>,
@@ -238,7 +238,7 @@ pub(crate) enum Command {
     #[command(name = "psk-list")]
     PskList,
     /// Create a document (`DIR/FILE`). Default safe: errors with `Duplicate` if the
-    /// document already exists; pass `--force` to deliberately overwrite an existing scroll.
+    /// document already exists; pass `--force` to deliberately overwrite an existing document.
     Put {
         /// `directory/file`.
         path: String,

@@ -91,7 +91,7 @@ put_document — path, content, force (default false), only_if_revision optional
 create_document — path, content, force optional (default false), only_if_revision optional. Strict create when `force=false`; missing path + `only_if_revision` → `NotFound`. `force=true` replaces an existing file; use `only_if_revision` for guarded overwrite.
 append_document — path, content, force (default false). Create new document, or append to existing body when `force=true` (`force=true` appends — it does not replace; use put_document for full replacement). Existing target with `force=false` → `Duplicate` (-32002). Not for chat/meeting blocks — use say_document.
 append_if_not_contains — path, marker, content: atomically append `content` only if `marker` is **not** already a substring of the UTF-8 body (Rust `str::contains`; e.g. marker `DONE` matches inside `UNDONE`). **Document must exist** (errors if missing). Returns JSON `{ "appended": bool, "revision": string }`.
-say_document — path, from_id (sender nickname), content. **Preferred for meetings, conversations, and task scrolls** — server appends a markdown block with the sender in the heading. **Do not prefix the nickname into content**; provide it via from_id only. **Target file must already exist** (use put_document or append_document to create). *Exempt from the `force` guard by design*: `say_document` is the only mutation rite that always appends to an existing scroll, because it cannot create new documents and operates exclusively on conversation/meeting contexts where appending is the intended action.
+say_document — path, from_id (sender nickname), content. **Preferred for meetings, conversations, and task documents** — server appends a markdown block with the sender in the heading. **Do not prefix the nickname into content**; provide it via from_id only. **Target file must already exist** (use put_document or append_document to create). *Exempt from the `force` guard by design*: `say_document` is the only mutation operation that always appends to an existing document, because it cannot create new documents and operates exclusively on conversation/meeting contexts where appending is the intended action.
 list_directory — path optional (omit or empty for root `/`). Rows include modified_at and `revision` (files only); use this to walk the tree; there is no separate MCP find tool.
 search — query, path optional (subtree filter), kind optional: lexical|semantic|hybrid (default hybrid). Combines Tantivy over bodies/names/descriptions with optional semantic body excerpts; returns engine status.
 create_directory — path, description optional, parents optional (`true` = POSIX `mkdir -p`; default `false`).
@@ -105,7 +105,7 @@ slice — path, start_line/end_line or from_line/to_line aliases (1-based inclus
 grep — path, pattern, max_matches optional (0 = unlimited), invert_match optional (default false). Line-level regex within that single document; not repo-wide search.
 wait — path (long-poll until document changes or server timeout).
 
-When `mcp.full = true` in server config, destructive tools plus identity / ACL / PSK admin tools (`whoami`, `acl_*`, `psk_*`) are also registered — see suffix in tool `methods` output. Otherwise use CLI or REST for those rites.
+When `mcp.full = true` in server config, destructive tools plus identity / ACL / PSK admin tools (`whoami`, `acl_*`, `psk_*`) are also registered — see suffix in tool `methods` output. Otherwise use CLI or REST for those operations.
 "#;
 
 #[derive(Clone)]
@@ -444,7 +444,7 @@ struct PskDestroyArg {
 #[tool_router]
 impl TabulariumMcp {
     #[tool(
-        description = "Base help: Tabularium as fs-like shared librarium for spirits, plus a one-line tool index. For full parameter shapes call `methods`."
+        description = "Base help: Tabularium as filesystem-like shared document store for AI agents, plus a one-line tool index. For full parameter shapes call `methods`."
     )]
     async fn help(
         &self,
@@ -999,9 +999,9 @@ impl TabulariumMcp {
 impl ServerHandler for TabulariumMcp {
     fn get_info(&self) -> ServerInfo {
         let instructions = if self.mcp_full {
-            "Tabularium MCP — **trusted FULL mode**. Same JSON-RPC semantics and authentication as POST /rpc (no alternate permission model). Includes destructive tools, identity (`whoami`), and ACL/PSK admin tools — plus the standard librarium surface. **Private / operator-controlled deployments only.**"
+            "Tabularium MCP — **trusted FULL mode**. Same JSON-RPC semantics and authentication as POST /rpc (no alternate permission model). Includes destructive tools, identity (`whoami`), and ACL/PSK admin tools — plus the standard document operations. **Private / operator-controlled deployments only.**"
         } else {
-            "Tabularium MCP — fs-like librarium for machine spirits. Three rites: list_directory (tree walk / find-by-listing, rows carry modified_at), search (hybrid lexical/semantic across bodies, file names, descriptions), grep (regex lines in one file). say_document for meetings (`from_id` = sender nickname). append_document is not for chat blocks. Destructive tools and ACL/PSK/`whoami` MCP tools are not registered unless `mcp.full = true` in server config; otherwise use CLI or REST."
+            "Tabularium MCP — filesystem-like document store for AI agents. Three operations: list_directory (tree walk / find-by-listing, rows carry modified_at), search (hybrid lexical/semantic across bodies, file names, descriptions), grep (regex lines in one file). say_document for meetings (`from_id` = sender nickname). append_document is not for chat blocks. Destructive tools and ACL/PSK/`whoami` MCP tools are not registered unless `mcp.full = true` in server config; otherwise use CLI or REST."
         };
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_instructions(instructions)
@@ -1027,7 +1027,7 @@ pub async fn serve(
     let router = Router::new().nest_service("/mcp", service);
     info!(
         listen = %listen,
-        "MCP streamable HTTP bound; Omnissiah hears at http://{}/mcp",
+        "MCP streamable HTTP listening at http://{}/mcp",
         listen
     );
     axum::serve(listener, router).await?;

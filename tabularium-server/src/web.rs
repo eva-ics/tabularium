@@ -727,7 +727,7 @@ async fn rpc_dispatch(State(st): State<AppState>, headers: HeaderMap, body: Byte
     let auth_result: Result<RequestAuth, Error> = if !st.authenticate_api {
         Ok(RequestAuth::Disabled)
     } else if req.method == "test" {
-        // Uptime rite stays callable so the machine-spirits can probe the Throne without a key.
+        // The uptime endpoint remains callable without authentication for health checks.
         Ok(RequestAuth::Disabled)
     } else {
         resolve_request_auth_arc(st.db.as_ref(), true, &headers, st.oidc.as_ref()).await

@@ -1,4 +1,4 @@
-/** Ask the Throne whether this key opens the gate (`GET /api/whoami`). */
+/** Check whether this key grants access (`GET /api/whoami`). */
 
 export type VerifyPskResult =
   | { ok: true }

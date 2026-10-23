@@ -1,4 +1,4 @@
-/** All HTTP to the librarium API goes through here — no raw `fetch` in components. */
+/** All HTTP to the document API goes through here — no raw `fetch` in components. */
 
 export type AuthHeaderFn = () => Record<string, string> | null;
 

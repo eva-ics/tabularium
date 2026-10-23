@@ -9,24 +9,26 @@ import {
 } from "./highlightSearchTerms";
 
 const lowlight = createLowlight({ json, bash });
-export type PreviewFormat = "markdown" | "json" | "bash";
+export type PreviewFormat = "markdown" | "json" | "bash" | "text";
 
 /** Explicit MIME wins; extension inference is only for missing/empty metadata. */
 export function documentPreviewFormat(path: string | null, mime?: string | null): PreviewFormat {
   const type = mime?.split(";", 1)[0].trim().toLowerCase();
   if (type) {
+    if (type === "text/plain") return "text";
     if (type === "application/json" || type === "text/json" || type.endsWith("+json")) return "json";
     if (["application/x-sh", "application/x-shellscript", "text/x-shellscript", "text/x-sh", "text/x-bash", "application/x-bash"].includes(type)) return "bash";
     return "markdown";
   }
   const name = path?.split("/").pop()?.toLowerCase() ?? "";
+  if (name.endsWith(".txt") || name.endsWith(".list")) return "text";
   if (name.endsWith(".json")) return "json";
   if (name.endsWith(".sh") || name.endsWith(".bash")) return "bash";
   return "markdown";
 }
 
 /** Render a token tree as React text/spans, never executable document HTML. */
-export function codePreviewNodes(content: string, language: "json" | "bash", terms: string[]): ReactNode {
+export function codePreviewNodes(content: string, language: "json" | "bash" | "text", terms: string[]): ReactNode {
   function text(value: string, key: string): ReactNode {
     if (terms.length === 0) return value;
     return splitPlainTextForPreview(value, terms).map((part, i) => part.kind === "text"
@@ -40,7 +42,7 @@ export function codePreviewNodes(content: string, language: "json" | "bash", ter
     return createElement("span", { key, className: classes }, part.children.map((child, i) => node(child, `${key}-${i}`)));
   }
   // Keep large documents responsive; plain text still preserves all source bytes.
-  if (content.length > 256_000) return text(content, "plain");
+  if (language === "text" || content.length > 256_000) return text(content, "plain");
   try {
     return lowlight.highlight(language, content).children.map((part, i) => node(part, String(i)));
   } catch {

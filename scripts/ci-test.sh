@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sacred integration rite (invoked by `just ci-test`):
+# Sacred integration workflow (invoked by `just ci-test`):
 #   1. rsync tree → root@${CI_HOST}:/opt/${CI_PROJECT} (excludes target/, .git/)
 #   2. Remote: deps + `npm ci && npm run build` in ui/; then cargo build --workspace --release
 #   3. Best-effort: free CI_LISTEN port (fuser/lsof) so no stray server blocks the bind
@@ -113,7 +113,7 @@ trap cleanup EXIT INT TERM
 PORT="${CI_LISTEN##*:}"
 LISTEN_ALL="0.0.0.0:${PORT}"
 
-# Free listen port if a prior rite left a stray server (best-effort).
+# Free listen port if a previous run left a stray server (best-effort).
 if [[ -n "$PORT" ]]; then
   if command -v fuser &>/dev/null; then
     fuser -k "${PORT}/tcp" 2>/dev/null || true
@@ -174,4 +174,4 @@ cd "$REMOTE_DIR"
 just test
 REMOTE
 
-echo "ci-test: the rite is complete; the Omnissiah approves."
+echo "ci-test: completed successfully."
