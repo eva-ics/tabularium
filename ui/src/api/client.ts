@@ -21,6 +21,7 @@ export interface ListedEntry {
 }
 
 export interface DocumentBody {
+  mime_type?: string | null;
   id: number;
   path: string;
   content: string;
@@ -195,7 +196,10 @@ export interface SearchHit {
   line_number: number | null;
 }
 
+export type SearchKind = "hybrid" | "semantic" | "lexical";
+
 export interface SearchDocumentsOptions {
+  kind?: SearchKind;
   /** Absolute directory path; limits search to that subtree. Omit for global. */
   subtreeDir?: string | null;
 }
@@ -210,6 +214,7 @@ export async function searchDocuments(
   }
   const params = new URLSearchParams();
   params.set("q", q);
+  params.set("kind", options?.kind ?? "hybrid");
   const sub = options?.subtreeDir?.trim();
   if (sub != null && sub !== "") {
     params.set("dir", sub);
@@ -217,7 +222,8 @@ export async function searchDocuments(
   const url = `/api/search?${params.toString()}`;
   const r = await request(url);
   if (!r.ok) {
-    throw new Error(`search failed: ${r.status}`);
+    const detail = await r.json().catch(() => null) as { error?: string } | null;
+    throw new Error(detail?.error || `search failed: ${r.status}`);
   }
   const j = (await r.json()) as unknown;
   if (!Array.isArray(j)) {

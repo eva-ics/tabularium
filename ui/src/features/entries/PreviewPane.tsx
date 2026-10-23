@@ -30,6 +30,7 @@ import { copyTextClipboard } from "bmat/dom";
 import { parentPath } from "./entryModel";
 import { withOpenDocQuery } from "./entriesPath";
 import styles from "./PreviewPane.module.scss";
+import { codePreviewNodes, documentPreviewFormat } from "./documentPreview";
 
 const sanitizeWithMark: Schema = {
   ...gfmTableKatexSanitizeSchema,
@@ -50,6 +51,7 @@ export type DocumentSurface = "preview" | "chat";
 interface PreviewPaneProps {
   pathLabel: string | null;
   content: string | null;
+  mimeType?: string | null;
   loading: boolean;
   error: string | null;
   /** When set (e.g. after opening a search hit), matching terms are highlighted. */
@@ -73,6 +75,7 @@ export const PreviewPane = forwardRef<HTMLDivElement, PreviewPaneProps>(
     {
       pathLabel,
       content,
+      mimeType,
       loading,
       error,
       highlightQuery,
@@ -101,6 +104,7 @@ export const PreviewPane = forwardRef<HTMLDivElement, PreviewPaneProps>(
       null,
     );
 
+    const format = documentPreviewFormat(pathLabel, mimeType);
     const highlightTrimmed = highlightQuery?.trim() ?? "";
     const highlightActive = highlightTrimmed.length >= 2;
 
@@ -128,6 +132,11 @@ export const PreviewPane = forwardRef<HTMLDivElement, PreviewPaneProps>(
       }
       return splitPlainTextForPreview(content, rawTerms);
     }, [content, highlightActive, rawTerms]);
+
+    const codeNodes = useMemo(() => {
+      if (format === "markdown" || content == null || rawMode) return null;
+      return codePreviewNodes(content, format, highlightActive ? rawTerms : []);
+    }, [content, format, rawMode, highlightActive, rawTerms]);
 
     const openDocDir = useMemo(() => {
       if (!pathLabel) {
@@ -396,7 +405,7 @@ export const PreviewPane = forwardRef<HTMLDivElement, PreviewPaneProps>(
                     setRawMode((r) => !r);
                   }}
                 >
-                  {rawMode ? "MD" : "RAW"}
+                  {rawMode ? (format === "markdown" ? "MD" : "PREVIEW") : "RAW"}
                 </button>
               ) : null}
               {showChatToggle ? (
@@ -505,7 +514,12 @@ export const PreviewPane = forwardRef<HTMLDivElement, PreviewPaneProps>(
               <pre className={styles.pre}>{content}</pre>
             )
           ) : null}
-          {showPreviewBody && !rawMode ? (
+          {showPreviewBody && !rawMode && format !== "markdown" ? (
+            <pre className={styles.codePreview} data-testid="preview-code" data-language={format}>
+              <code>{codeNodes}</code>
+            </pre>
+          ) : null}
+          {showPreviewBody && !rawMode && format === "markdown" ? (
             <div className={`${styles.markdown} markdown`}>
               <ReactMarkdown
                 remarkPlugins={markdownRemarkPlugins}

@@ -493,7 +493,8 @@ fn row_to_file_meta(row: &SqliteRow, canonical_path: String) -> Result<DocumentM
         row.try_get::<Timestamp, _>(5)?,
         row.try_get::<Option<String>, _>(6)?,
         row.try_get::<i64, _>(7)?,
-    ))
+    )
+    .with_mime_type(row.try_get::<Option<String>, _>(8)?))
 }
 
 #[derive(Clone, Copy)]
@@ -994,7 +995,7 @@ impl Storage for SqliteStorage {
     #[instrument(skip(self), fields(file_id = file_id.raw()), err(Debug))]
     async fn get_file_meta(&self, file_id: EntryId) -> Result<DocumentMeta> {
         let row = sqlx::query(
-            r"SELECT id, parent_id, name, created_at, modified_at, accessed_at, revision, size
+            r"SELECT id, parent_id, name, created_at, modified_at, accessed_at, revision, size, mime_type
             FROM entries WHERE id = ? AND kind = 1",
         )
         .bind(file_id.raw())
@@ -1254,6 +1255,27 @@ impl Storage for SqliteStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn file_metadata_reads_existing_optional_mime_without_inference() {
+        let dir = tempfile::tempdir().unwrap();
+        let db =
+            SqliteStorage::connect(format!("sqlite://{}", dir.path().join("mime.db").display()))
+                .await
+                .unwrap();
+        let id = db.create_file("/payload.json", "{}").await.unwrap();
+        assert_eq!(db.get_file_meta(id).await.unwrap().mime_type(), None);
+        sqlx::query("UPDATE entries SET mime_type=? WHERE id=?")
+            .bind("text/x-shellscript")
+            .bind(id.raw())
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            db.get_file_meta(id).await.unwrap().mime_type(),
+            Some("text/x-shellscript")
+        );
+    }
 
     #[test]
     fn cte_path_segments_json_roundtrip() {

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Adds a Web UI search-kind selector and source-preserving JSON/shell previews
+  with stored MIME precedence, extension fallback, and Markdown default.
+
 - Adds optional OpenAI-compatible embeddings with custom headers and a rebuildable
   semantic sidecar, without changing the document database schema.
 - Adds `lexical`, `semantic`, and default `hybrid` search/reindex modes across

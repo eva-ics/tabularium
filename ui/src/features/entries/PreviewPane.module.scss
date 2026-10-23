@@ -672,3 +672,23 @@
     max-height: none !important;
   }
 }
+
+.codePreview {
+  margin: 0;
+  padding: 1rem;
+  overflow: auto;
+  white-space: pre;
+  tab-size: 2;
+  font: 0.83rem/1.6 ui-monospace, SFMono-Regular, Consolas, monospace;
+  background: $bg-deep;
+  border: 1px solid $border;
+  border-radius: 4px;
+
+  code { font: inherit; }
+  :global(.hljs-comment) { color: $text-muted; font-style: italic; }
+  :global(.hljs-string) { color: #98c379; }
+  :global(.hljs-number), :global(.hljs-literal) { color: #d19a66; }
+  :global(.hljs-keyword), :global(.hljs-built_in) { color: #c678dd; }
+  :global(.hljs-attr), :global(.hljs-variable) { color: #61afef; }
+  :global(.hljs-meta) { color: $accent; }
+}

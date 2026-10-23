@@ -9,7 +9,7 @@ import re
 import time
 import uuid
 from typing import Any
-from urllib.parse import quote, unquote, urlparse
+from urllib.parse import quote, unquote, urlparse, parse_qs
 
 import pytest
 import requests
@@ -730,3 +730,38 @@ def test_ws_T20_search_root_nav_goes_to_repository_root(
     _wait_search_mode(d, present=False)
     assert _logical_dir_from_url(d.current_url) == "/"
 
+
+
+def test_search_kind_selector_refetches_and_preserves_scope(
+    selenium_driver, tabularium_base_url, seed_search_hierarchy,
+):
+    d = selenium_driver
+    seed = seed_search_hierarchy
+    d.get(_entries_url(tabularium_base_url, seed["root"], "inner"))
+    _wait_app_ready(d)
+    selector = Select(d.find_element(By.CSS_SELECTOR, "[aria-label='Search kind']"))
+    assert selector.first_selected_option.get_attribute("value") == "hybrid"
+    assert [o.get_attribute("value") for o in selector.options] == ["hybrid", "semantic", "lexical"]
+    _fire_search(d, seed["tok_sub"])
+    _wait_for_search_hits(d)
+
+    def last_request(kind, local):
+        urls = d.execute_script("return performance.getEntriesByType('resource').map(e => e.name).filter(n => n.includes('/api/search?'))")
+        if not urls:
+            return False
+        params = parse_qs(urlparse(urls[-1]).query)
+        return params.get("kind") == [kind] and (("dir" in params) == local)
+
+    _wait(d).until(lambda _: last_request("hybrid", True))
+    selector.select_by_value("lexical")
+    _wait(d).until(lambda _: last_request("lexical", True))
+    _wait_for_search_hits(d)
+    _set_search_scope(d, "global")
+    _wait(d).until(lambda _: last_request("lexical", False))
+    selector.select_by_value("semantic")
+    _wait(d).until(lambda _: last_request("semantic", False))
+    selector.select_by_value("hybrid")
+    _wait(d).until(lambda _: last_request("hybrid", False))
+    _wait_for_search_hits(d)
+    d.set_window_size(390, 844)
+    assert d.execute_script("return document.documentElement.scrollWidth <= window.innerWidth")

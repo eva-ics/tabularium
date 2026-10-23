@@ -21,6 +21,7 @@ import {
   searchDocuments,
   setEntryDescription,
   type SearchHit,
+  type SearchKind,
 } from "../../api/client";
 import { useAppShell } from "../../app/appShellContext";
 import { useLibraryKeyboard } from "../../hooks/useLibraryKeyboard";
@@ -249,6 +250,7 @@ export function EntriesView() {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [focusPane, setFocusPane] = useState<"tree" | "preview">("tree");
   const [previewContent, setPreviewContent] = useState<string | null>(null);
+  const [previewMimeType, setPreviewMimeType] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [mobilePanel, setMobilePanel] = useState<"entries" | "preview">(
@@ -264,6 +266,7 @@ export function EntriesView() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [searchSelectedIndex, setSearchSelectedIndex] = useState(0);
+  const [searchKind, setSearchKind] = useState<SearchKind>("hybrid");
   const [searchScope, setSearchScope] = useState<"local" | "global">("local");
   const [sessionSearchScope, setSessionSearchScope] = useState<
     "local" | "global" | null
@@ -330,7 +333,7 @@ export function EntriesView() {
       try {
         const snap = snapshotRef.current;
         const subtreeDir = snap?.scope === "local" ? snap.dirPath : undefined;
-        const hits = await searchDocuments(firedQuery, { subtreeDir });
+        const hits = await searchDocuments(firedQuery, { subtreeDir, kind: searchKind });
         if (!cancelled) {
           setSearchHits(hits);
         }
@@ -348,7 +351,7 @@ export function EntriesView() {
     return () => {
       cancelled = true;
     };
-  }, [firedQuery, sessionSearchScope]);
+  }, [firedQuery, sessionSearchScope, searchKind]);
 
   const confirmDiscardIfNeeded = useCallback((): boolean => {
     const s = editSessionRef.current;
@@ -578,6 +581,7 @@ export function EntriesView() {
   useEffect(() => {
     if (!openDocPath) {
       setPreviewContent(null);
+      setPreviewMimeType(null);
       setPreviewError(null);
       setPreviewLoading(false);
       return;
@@ -590,6 +594,7 @@ export function EntriesView() {
         const doc = await getDocument(openDocPath);
         if (!cancelled) {
           setPreviewContent(doc.content);
+          setPreviewMimeType(doc.mime_type ?? null);
         }
       } catch (e) {
         if (!cancelled) {
@@ -1541,6 +1546,22 @@ export function EntriesView() {
             <option value="local">Local</option>
             <option value="global">Global</option>
           </select>
+          <select
+            className={styles.searchScope}
+            aria-label="Search kind"
+            data-testid="search-kind"
+            value={searchKind}
+            onChange={(ev) => {
+              const value = ev.target.value;
+              if (value === "hybrid" || value === "semantic" || value === "lexical") {
+                setSearchKind(value);
+              }
+            }}
+          >
+            <option value="hybrid">Hybrid</option>
+            <option value="semantic">Semantic</option>
+            <option value="lexical">Lexical</option>
+          </select>
           <input
             ref={searchInputRef}
             type="text"
@@ -1688,6 +1709,7 @@ export function EntriesView() {
               ref={previewBodyRef}
               pathLabel={openDocPath}
               content={previewContent}
+              mimeType={previewMimeType}
               loading={previewLoading}
               error={previewError}
               highlightQuery={previewHighlightQuery}

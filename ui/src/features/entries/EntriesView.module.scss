@@ -11,6 +11,7 @@
 
 .searchBar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem;
   flex-shrink: 0;
@@ -98,7 +99,7 @@
 }
 
 .searchInput {
-  flex: 1;
+  flex: 1 1 12rem;
   min-width: 0;
   padding: 0.45rem 0.65rem;
   font: inherit;

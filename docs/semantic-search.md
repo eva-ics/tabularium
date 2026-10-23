@@ -62,3 +62,9 @@ RPC search preserves the legacy hit array by default. With `with_status=true`, i
 Statuses include `ready`, `disabled`, `not_requested`, `unindexed`, `incompatible`, `partial`, `unavailable`. Partial means refreshes remain; hybrid results can still include current semantic quotes and lexical hits. CLI prints a concise diagnostic for incomplete/unavailable engines and retains the normal result list.
 
 ACL, directory/file scope and source revision checks apply before semantic candidates consume the result limit. A denied document is not returned through either engine. The inference service receives source fragments during indexing and queries during search, so it is part of the trusted deployment boundary.
+
+## Web UI
+
+The search bar has independent scope (Local/Global) and kind
+(Hybrid/Semantic/Lexical, default Hybrid) selectors. Changing kind during a
+search refetches the committed query without changing its directory scope.

@@ -423,6 +423,7 @@ async fn get_or_list(
                 "accessed_at": meta.accessed_at(),
                 "revision": meta.revision(),
                 "size_bytes": meta.size_bytes(),
+                "mime_type": meta.mime_type(),
             }))
             .into_response())
         }
@@ -1230,6 +1231,7 @@ pub(crate) async fn dispatch_app_rpc(
                 "accessed_at": meta.accessed_at(),
                 "revision": meta.revision(),
                 "size_bytes": meta.size_bytes(),
+                "mime_type": meta.mime_type(),
             }))
         }
         "wait" => {
@@ -1260,6 +1262,7 @@ pub(crate) async fn dispatch_app_rpc(
                 "accessed_at": meta.accessed_at(),
                 "revision": meta.revision(),
                 "size_bytes": meta.size_bytes(),
+                "mime_type": meta.mime_type(),
             }))
         }
         "exists" => {
@@ -1396,6 +1399,7 @@ pub(crate) async fn dispatch_app_rpc(
                 "id": meta.id().raw(),
                 "path": meta.canonical_path(),
                 "size_bytes": meta.size_bytes(),
+                "mime_type": meta.mime_type(),
                 "line_count": lines,
                 "created_at": meta.created_at(),
                 "modified_at": meta.modified_at(),

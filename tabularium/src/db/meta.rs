@@ -236,6 +236,7 @@ pub struct DocumentMeta {
     /// UUID v4 string; every file row carries one after migration.
     revision: Option<String>,
     size_bytes: i64,
+    mime_type: Option<String>,
 }
 
 impl DocumentMeta {
@@ -261,7 +262,18 @@ impl DocumentMeta {
             accessed_at,
             revision,
             size_bytes,
+            mime_type: None,
         }
+    }
+
+    pub(crate) fn with_mime_type(mut self, mime_type: Option<String>) -> Self {
+        self.mime_type = mime_type;
+        self
+    }
+
+    /// Optional stored MIME type; callers may infer a preview format when absent.
+    pub fn mime_type(&self) -> Option<&str> {
+        self.mime_type.as_deref()
     }
 
     pub fn id(&self) -> EntryId {
