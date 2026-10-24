@@ -27,6 +27,11 @@
 - Neutral interface/help wording, Selenium focus handling, and regression
   coverage for search bounds, ordering, transports and offline semantic retrieval.
 
+### Fixed
+
+- Makes Web UI path copying more reliable with a local clipboard helper, a
+  selection-based fallback, and manual copying when browser access is denied.
+
 ### Upgrade notes
 
 - JSON metadata adds an automatically migrated SQLite column with an empty-object

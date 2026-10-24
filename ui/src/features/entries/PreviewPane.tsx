@@ -26,7 +26,7 @@ import {
   markdownRemarkPlugins,
   rehypeKatex,
 } from "../../markdown/mathMarkdown";
-import { copyTextClipboard } from "bmat/dom";
+import { copyTextClipboard } from "../../utils/clipboard";
 import { parentPath } from "./entryModel";
 import { withOpenDocQuery } from "./entriesPath";
 import styles from "./PreviewPane.module.scss";
@@ -115,6 +115,8 @@ export const PreviewPane = forwardRef<HTMLDivElement, PreviewPaneProps>(
     const [saving, setSaving] = useState(false);
     const [editLoading, setEditLoading] = useState(false);
     const [copied, setCopied] = useState(false);
+    const [copyFailed, setCopyFailed] = useState(false);
+    useEffect(() => { setCopyFailed(false); setCopied(false); }, [pathLabel]);
     const [editPrepareError, setEditPrepareError] = useState<string | null>(
       null,
     );
@@ -373,6 +375,13 @@ export const PreviewPane = forwardRef<HTMLDivElement, PreviewPaneProps>(
         data-testid="preview-pane"
         aria-label="Document preview"
       >
+        {copyFailed && pathLabel ? (
+          <label role="alert">
+            Could not copy automatically. Select and copy the path:
+            <input aria-label="Document path to copy" value={pathLabel} readOnly
+              onFocus={(event) => event.currentTarget.select()} />
+          </label>
+        ) : null}
         <div className={styles.header}>
           <span className={styles.headerLeft}>
             <span className={styles.headerTitle} data-testid="preview-path" title={pathLabel ?? undefined}>
@@ -384,10 +393,11 @@ export const PreviewPane = forwardRef<HTMLDivElement, PreviewPaneProps>(
                 className={styles.copyPath}
                 title="Copy path"
                 onClick={() => {
+                  setCopyFailed(false);
                   void copyTextClipboard(pathLabel).then(() => {
                     setCopied(true);
                     setTimeout(() => setCopied(false), 1500);
-                  });
+                  }).catch(() => setCopyFailed(true));
                 }}
               >
                 {copied ? "✓" : "⎘"}
