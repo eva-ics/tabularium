@@ -17,6 +17,10 @@ use tracing::Instrument;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
+// Scoped subscribers still share tracing's process-wide callsite interest cache.
+// Keep their installation/drop lifetimes disjoint across parallel test threads.
+static TRACE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 async fn seeded_app() -> (AppState, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("otel.db");
@@ -51,6 +55,7 @@ fn telemetry_disabled_shutdown_is_noop() {
 
 #[tokio::test]
 async fn mcp_search_emits_nested_spans() {
+    let _serial = TRACE_TEST_LOCK.lock().await;
     let exporter = InMemorySpanExporterBuilder::new().build();
     let provider = SdkTracerProvider::builder()
         .with_simple_exporter(exporter.clone())
@@ -94,6 +99,7 @@ async fn mcp_search_emits_nested_spans() {
 
 #[tokio::test]
 async fn mcp_params_and_bodies_stay_out_of_otel_export() {
+    let _serial = TRACE_TEST_LOCK.lock().await;
     let exporter = InMemorySpanExporterBuilder::new().build();
     let provider = SdkTracerProvider::builder()
         .with_simple_exporter(exporter.clone())
@@ -167,6 +173,7 @@ async fn mcp_params_and_bodies_stay_out_of_otel_export() {
 
 #[tokio::test]
 async fn mcp_tool_error_marks_span_error() {
+    let _serial = TRACE_TEST_LOCK.lock().await;
     let exporter = InMemorySpanExporterBuilder::new().build();
     let provider = SdkTracerProvider::builder()
         .with_simple_exporter(exporter.clone())
