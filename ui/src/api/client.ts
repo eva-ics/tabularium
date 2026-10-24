@@ -200,6 +200,10 @@ export type SearchKind = "hybrid" | "semantic" | "lexical";
 
 export interface SearchDocumentsOptions {
   kind?: SearchKind;
+  sort?: "relevance" | "modified_desc";
+  /** Exclusive UNIX-nanosecond bounds, kept as strings to avoid JS precision loss. */
+  modifiedAfter?: string;
+  modifiedBefore?: string;
   /** Absolute directory path; limits search to that subtree. Omit for global. */
   subtreeDir?: string | null;
 }
@@ -215,6 +219,9 @@ export async function searchDocuments(
   const params = new URLSearchParams();
   params.set("q", q);
   params.set("kind", options?.kind ?? "hybrid");
+  params.set("sort", options?.sort ?? "relevance");
+  if (options?.modifiedAfter) params.set("modified_after", options.modifiedAfter);
+  if (options?.modifiedBefore) params.set("modified_before", options.modifiedBefore);
   const sub = options?.subtreeDir?.trim();
   if (sub != null && sub !== "") {
     params.set("dir", sub);

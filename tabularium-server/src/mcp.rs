@@ -93,7 +93,7 @@ append_document — path, content, force (default false). Create new document, o
 append_if_not_contains — path, marker, content: atomically append `content` only if `marker` is **not** already a substring of the UTF-8 body (Rust `str::contains`; e.g. marker `DONE` matches inside `UNDONE`). **Document must exist** (errors if missing). Returns JSON `{ "appended": bool, "revision": string }`.
 say_document — path, from_id (sender nickname), content. **Preferred for meetings, conversations, and task documents** — server appends a markdown block with the sender in the heading. **Do not prefix the nickname into content**; provide it via from_id only. **Target file must already exist** (use put_document or append_document to create). *Exempt from the `force` guard by design*: `say_document` is the only mutation operation that always appends to an existing document, because it cannot create new documents and operates exclusively on conversation/meeting contexts where appending is the intended action.
 list_directory — path optional (omit or empty for root `/`). Rows include modified_at and `revision` (files only); use this to walk the tree; there is no separate MCP find tool.
-search — query, path optional (subtree filter), kind optional: lexical|semantic|hybrid (default hybrid). Combines Tantivy over bodies/names/descriptions with optional semantic body excerpts; returns engine status, has_more/truncated, revision, modified_at and exact excerpt line ranges. Optional limit (1..256) and max_output_bytes (512..1048576) bound the response.
+search — query, path optional (subtree filter), kind optional: lexical|semantic|hybrid (default hybrid). Combines Tantivy over bodies/names/descriptions with optional semantic body excerpts; returns engine status, has_more/truncated, revision, modified_at and exact excerpt line ranges. Optional limit (1..256) and max_output_bytes (512..1048576) bound the response. sort=relevance|modified_desc; modified_after/modified_before: exclusive UNIX nanoseconds. Equal keys use canonical path.
 create_directory — path, description optional, parents optional (`true` = POSIX `mkdir -p`; default `false`).
 describe — path; optional description string (omit to read; empty string clears).
 document_exists — path (wire RPC name `exists`; tests file only).
@@ -313,6 +313,15 @@ struct SearchArg {
     /// Compact UTF-8 JSON payload budget, 512..1048576 (default 65536).
     #[serde(default)]
     max_output_bytes: Option<usize>,
+    /// relevance (default) or modified_desc; ties use canonical path.
+    #[serde(default)]
+    sort: Option<String>,
+    /// Exclusive lower bound, UNIX nanoseconds (same unit as modified_at).
+    #[serde(default)]
+    modified_after: Option<u64>,
+    /// Exclusive upper bound, UNIX nanoseconds.
+    #[serde(default)]
+    modified_before: Option<u64>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -616,7 +625,7 @@ impl TabulariumMcp {
     }
 
     #[tool(
-        description = "Hybrid search with exact source excerpts, revision, modified_at and engine status. Optional limit and max_output_bytes bound the payload; has_more/truncated explicitly mark omitted hits. Optional kind=lexical|semantic|hybrid (default hybrid); path limits subtree or file. For path/name listing use list_directory; for line-regex use grep."
+        description = "Hybrid search with exact source excerpts, revision, modified_at and engine status. Optional limit and max_output_bytes bound the payload; has_more/truncated explicitly mark omitted hits. Optional kind=lexical|semantic|hybrid (default hybrid); sort=relevance|modified_desc. modified_after/before are exclusive UNIX nanoseconds. Ties use canonical path. path limits subtree or file. For path/name listing use list_directory; for line-regex use grep."
     )]
     async fn search(
         &self,
@@ -633,6 +642,15 @@ impl TabulariumMcp {
         }
         if let Some(kind) = p.kind {
             m.insert("kind".into(), json!(kind.as_str()));
+        }
+        if let Some(sort) = p.sort {
+            m.insert("sort".into(), json!(sort));
+        }
+        if let Some(n) = p.modified_after {
+            m.insert("modified_after".into(), json!(n));
+        }
+        if let Some(n) = p.modified_before {
+            m.insert("modified_before".into(), json!(n));
         }
         m.insert("query".into(), json!(p.query));
         if let Some(path) = p.path.filter(|s| !s.is_empty()) {
@@ -1048,4 +1066,79 @@ pub async fn serve(
     );
     axum::serve(listener, router).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod search_option_tests {
+    use super::*;
+    use bma_ts::Monotonic;
+    use std::time::Duration;
+    use tabularium::SqliteDatabase;
+
+    #[tokio::test]
+    async fn mcp_search_forwards_sort_time_bounds_and_validates_sort() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Arc::new(
+            SqliteDatabase::init(
+                format!("sqlite://{}", dir.path().join("source.db").display()),
+                dir.path().join("index"),
+                0,
+            )
+            .await
+            .unwrap(),
+        );
+        for name in ["a", "b"] {
+            db.create_file_in_directory("/", name, "needle")
+                .await
+                .unwrap();
+        }
+        let mcp = TabulariumMcp::new(
+            AppState {
+                db,
+                wait_timeout: Duration::from_secs(1),
+                process_started_at: Monotonic::now(),
+                authenticate_api: false,
+                authenticate_mcp: false,
+                oidc: None,
+            },
+            Arc::from(""),
+            false,
+        );
+        let parts = || http::Request::new(()).into_parts().0;
+        let args = |extra: Value| {
+            let mut value =
+                json!({"query":"needle","kind":"lexical","limit":1,"sort":"modified_desc"});
+            value
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            serde_json::from_value::<SearchArg>(value).unwrap()
+        };
+        let result = mcp
+            .search(Extension(parts()), Parameters(args(json!({}))))
+            .await
+            .unwrap();
+        let report: Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(report["hits"][0]["path"], "/b");
+        assert_eq!(report["has_more"], true);
+        let timestamp = report["hits"][0]["modified_at"].as_u64().unwrap();
+        let result = mcp
+            .search(
+                Extension(parts()),
+                Parameters(args(json!({"modified_after":timestamp}))),
+            )
+            .await
+            .unwrap();
+        let report: Value = serde_json::from_str(&result).unwrap();
+        assert!(report["hits"].as_array().unwrap().is_empty());
+        assert_eq!(report["has_more"], false);
+        assert!(
+            mcp.search(
+                Extension(parts()),
+                Parameters(args(json!({"sort":"invalid"})))
+            )
+            .await
+            .is_err()
+        );
+    }
 }

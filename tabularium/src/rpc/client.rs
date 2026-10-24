@@ -228,7 +228,36 @@ impl Client {
         limit: Option<usize>,
         max_output_bytes: Option<usize>,
     ) -> Result<SearchReportRow> {
-        let mut params = json!({"query":query.as_ref(),"kind":kind,"with_status":true});
+        self.search_with_options(
+            query,
+            subtree,
+            kind,
+            limit,
+            max_output_bytes,
+            crate::SearchOptions::default(),
+        )
+        .await
+    }
+
+    /// Bounded search with deterministic ordering and exclusive UNIX-nanosecond time bounds.
+    pub async fn search_with_options(
+        &self,
+        query: impl AsRef<str>,
+        subtree: Option<&Path>,
+        kind: crate::SearchKind,
+        limit: Option<usize>,
+        max_output_bytes: Option<usize>,
+        options: crate::SearchOptions,
+    ) -> Result<SearchReportRow> {
+        options.validate()?;
+        let mut params = json!({"query":query.as_ref(),"kind":kind,"with_status":true,
+            "sort": options.sort});
+        if let Some(n) = options.modified_after {
+            params["modified_after"] = json!(n);
+        }
+        if let Some(n) = options.modified_before {
+            params["modified_before"] = json!(n);
+        }
         if let Some(n) = limit {
             params["limit"] = json!(n);
         }

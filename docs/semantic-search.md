@@ -68,3 +68,53 @@ ACL, directory/file scope and source revision checks apply before semantic candi
 The search bar has independent scope (Local/Global) and kind
 (Hybrid/Semantic/Lexical, default Hybrid) selectors. Changing kind during a
 search refetches the committed query without changing its directory scope.
+
+## Modification-time filters and ordering
+
+Search accepts `sort=relevance` (default) or `sort=modified_desc`.
+Equal primary keys are ordered by canonical path ascending, then document ID.
+`modified_after` and `modified_before` are **exclusive unsigned UNIX
+nanoseconds**, the same unit as returned `modified_at`; equality excludes the
+document. Equal bounds yield an empty interval; a reversed interval is invalid.
+Missing bounds are unbounded. Modification time is a technical timestamp, not
+an assertion of factual currency. No source database schema change is required.
+
+Filters and ACL/path constraints apply before per-engine result limits.
+For hybrid search, relevance retains reciprocal-rank fusion; modified_desc
+orders the union of each engine's newest matching candidates. Scores remain
+engine/fusion scores even when ordering by modification time.
+Existing array responses remain arrays unless with_status=true, limit, or
+max_output_bytes requests an envelope. sort/time filters alone do not change shape.
+
+CLI example:
+```sh
+tb search --kind hybrid --sort modified_desc --modified-after 1792713600000000000 --limit 10 --json memory
+```
+
+REST GET uses query parameters, REST POST accepts JSON/form/multipart, RPC/MCP
+use the same snake_case keys. The Web UI provides an order selector and local
+date/time inputs, converting milliseconds to nanoseconds using BigInt strings.
+
+CI includes deterministic equal-date fixtures and offline semantic retrieval
+controls (literal miss, semantic hit, unrelated negative, exact quote/slice,
+revision and ACL/path). These validate retrieval plumbing, not real-model
+relevance. Real embeddings still need a deployment-specific evaluation set.
+
+### Relevance acceptance caveat
+
+Semantic mode is a ranker, not an absence detector: it currently has no absolute
+similarity threshold. With a large limit even unrelated sources can appear at
+the bottom. The offline negative control verifies ordering, not exclusion.
+Do not interpret a nonempty semantic result as proof that a relevant fact exists.
+Calibrate a real-model evaluation set before introducing a score cutoff.
+
+### Small deployment check (2026-10-24)
+
+A read-only check against the deployed BGE-M3 index used three private,
+paraphrased RU/EN queries and an expected document already known from source.
+The expected document ranked first twice and second once in semantic mode;
+lexical search missed it for the cross-language query. Two semantic excerpts
+contained the requested fact, while the third selected a nearby general passage.
+Private queries, source paths and content are intentionally not included here.
+This demonstrates both a cross-language gain and an excerpt-selection limitation,
+not statistical recall/precision acceptance. No production documents were changed.

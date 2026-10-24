@@ -267,6 +267,9 @@ export function EntriesView() {
   const [searchError, setSearchError] = useState<string | null>(null);
   const [searchSelectedIndex, setSearchSelectedIndex] = useState(0);
   const [searchKind, setSearchKind] = useState<SearchKind>("hybrid");
+  const [searchSort, setSearchSort] = useState<"relevance" | "modified_desc">("relevance");
+  const [modifiedAfter, setModifiedAfter] = useState("");
+  const [modifiedBefore, setModifiedBefore] = useState("");
   const [searchScope, setSearchScope] = useState<"local" | "global">("local");
   const [sessionSearchScope, setSessionSearchScope] = useState<
     "local" | "global" | null
@@ -333,7 +336,11 @@ export function EntriesView() {
       try {
         const snap = snapshotRef.current;
         const subtreeDir = snap?.scope === "local" ? snap.dirPath : undefined;
-        const hits = await searchDocuments(firedQuery, { subtreeDir, kind: searchKind });
+        const toNanos = (value: string) => value
+          ? (BigInt(new Date(value).getTime()) * 1_000_000n).toString() : undefined;
+        const hits = await searchDocuments(firedQuery, { subtreeDir, kind: searchKind,
+          sort: searchSort, modifiedAfter: toNanos(modifiedAfter),
+          modifiedBefore: toNanos(modifiedBefore) });
         if (!cancelled) {
           setSearchHits(hits);
         }
@@ -351,7 +358,7 @@ export function EntriesView() {
     return () => {
       cancelled = true;
     };
-  }, [firedQuery, sessionSearchScope, searchKind]);
+  }, [firedQuery, sessionSearchScope, searchKind, searchSort, modifiedAfter, modifiedBefore]);
 
   const confirmDiscardIfNeeded = useCallback((): boolean => {
     const s = editSessionRef.current;
@@ -1562,6 +1569,18 @@ export function EntriesView() {
             <option value="semantic">Semantic</option>
             <option value="lexical">Lexical</option>
           </select>
+          <select className={styles.searchScope} aria-label="Search order"
+            data-testid="search-sort" value={searchSort}
+            onChange={(ev) => setSearchSort(ev.target.value as "relevance" | "modified_desc")}>
+            <option value="relevance">Relevance</option>
+            <option value="modified_desc">Recently modified</option>
+          </select>
+          <input className={styles.searchScope} type="datetime-local" aria-label="Modified after" title="Modified after (exclusive, local time)"
+            data-testid="search-modified-after" value={modifiedAfter}
+            onChange={(ev) => setModifiedAfter(ev.target.value)} />
+          <input className={styles.searchScope} type="datetime-local" aria-label="Modified before" title="Modified before (exclusive, local time)"
+            data-testid="search-modified-before" value={modifiedBefore}
+            onChange={(ev) => setModifiedBefore(ev.target.value)} />
           <input
             ref={searchInputRef}
             type="text"

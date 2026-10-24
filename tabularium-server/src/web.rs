@@ -218,6 +218,12 @@ struct SearchQuery {
     limit: Option<usize>,
     #[serde(default)]
     max_output_bytes: Option<usize>,
+    #[serde(default)]
+    sort: tabularium::SearchSort,
+    #[serde(default)]
+    modified_after: Option<u64>,
+    #[serde(default)]
+    modified_before: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -234,6 +240,12 @@ struct SearchPostBody {
     limit: Option<usize>,
     #[serde(default)]
     max_output_bytes: Option<usize>,
+    #[serde(default)]
+    sort: tabularium::SearchSort,
+    #[serde(default)]
+    modified_after: Option<u64>,
+    #[serde(default)]
+    modified_before: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -636,6 +648,11 @@ async fn search_get(
         q.with_status || q.limit.is_some() || q.max_output_bytes.is_some(),
         q.limit,
         q.max_output_bytes,
+        tabularium::SearchOptions {
+            sort: q.sort,
+            modified_after: q.modified_after,
+            modified_before: q.modified_before,
+        },
     )
     .await
 }
@@ -659,7 +676,10 @@ async fn search_post(
         let values: Map<String, Value> = fields
             .into_iter()
             .map(|(k, v)| {
-                let value = if k == "limit" || k == "max_output_bytes" {
+                let value = if matches!(
+                    k.as_str(),
+                    "limit" | "max_output_bytes" | "modified_after" | "modified_before"
+                ) {
                     v.parse::<u64>().map_or(Value::String(v), |n| json!(n))
                 } else if k == "with_status" {
                     match v.as_str() {
@@ -690,10 +710,16 @@ async fn search_post(
         b.with_status || b.limit.is_some() || b.max_output_bytes.is_some(),
         b.limit,
         b.max_output_bytes,
+        tabularium::SearchOptions {
+            sort: b.sort,
+            modified_after: b.modified_after,
+            modified_before: b.modified_before,
+        },
     )
     .await
 }
 
+#[allow(clippy::too_many_arguments)] // Shared legacy transport arguments plus additive options.
 async fn search_inner(
     st: &AppState,
     auth: &RequestAuth,
@@ -703,6 +729,7 @@ async fn search_inner(
     with_status: bool,
     limit: Option<usize>,
     max_output_bytes: Option<usize>,
+    options: tabularium::SearchOptions,
 ) -> ApiResult<Response> {
     let (limit, budget) = search_bounds(limit, max_output_bytes).map_err(ApiError)?;
     let scope = if let Some(d) = dir_prefix {
@@ -718,7 +745,7 @@ async fn search_inner(
     let (dp, only) = scope.directory_prefix_and_restrict();
     let report = st
         .db
-        .search_report(q, dp, limit, only, kind, search_auth_context(auth))
+        .search_report_with_options(q, dp, limit, only, kind, search_auth_context(auth), options)
         .await?;
     let (payload, truncated) = search_wire(&report, with_status, budget);
     let mut response = Json(payload).into_response();
@@ -1377,9 +1404,20 @@ pub(crate) async fn dispatch_app_rpc(
             )?;
             let with_status =
                 with_status || m.contains_key("limit") || m.contains_key("max_output_bytes");
+            let options: tabularium::SearchOptions =
+                serde_json::from_value(Value::Object(m.clone()))
+                    .map_err(|e| Error::InvalidInput(e.to_string()))?;
             let report = st
                 .db
-                .search_report(q, dp, limit, restrict_doc, kind, search_auth_context(auth))
+                .search_report_with_options(
+                    q,
+                    dp,
+                    limit,
+                    restrict_doc,
+                    kind,
+                    search_auth_context(auth),
+                    options,
+                )
                 .await?;
             Ok(search_wire(&report, with_status, budget).0)
         }

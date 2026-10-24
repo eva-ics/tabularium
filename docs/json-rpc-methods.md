@@ -88,3 +88,34 @@ The semantic sidecar is rebuilt without migrating the document database.
 See [semantic search](semantic-search.md) for configuration, API status envelopes, upgrade steps, and fallback behavior.
 
 Bounded search and revision-checked `slice`: see [P1 contract](rest-api.md#bounded-search). `search` adds optional `limit`/`max_output_bytes`; `slice` adds optional `expected_revision`.
+
+## Modification-time filters and ordering
+
+Search accepts `sort=relevance` (default) or `sort=modified_desc`.
+Equal primary keys are ordered by canonical path ascending, then document ID.
+`modified_after` and `modified_before` are **exclusive unsigned UNIX
+nanoseconds**, the same unit as returned `modified_at`; equality excludes the
+document. Equal bounds yield an empty interval; a reversed interval is invalid.
+Missing bounds are unbounded. Modification time is a technical timestamp, not
+an assertion of factual currency. No source database schema change is required.
+
+Filters and ACL/path constraints apply before per-engine result limits.
+For hybrid search, relevance retains reciprocal-rank fusion; modified_desc
+orders the union of each engine's newest matching candidates. Scores remain
+engine/fusion scores even when ordering by modification time.
+Existing array responses remain arrays unless with_status=true, limit, or
+max_output_bytes requests an envelope. sort/time filters alone do not change shape.
+
+CLI example:
+```sh
+tb search --kind hybrid --sort modified_desc --modified-after 1792713600000000000 --limit 10 --json memory
+```
+
+REST GET uses query parameters, REST POST accepts JSON/form/multipart, RPC/MCP
+use the same snake_case keys. The Web UI provides an order selector and local
+date/time inputs, converting milliseconds to nanoseconds using BigInt strings.
+
+CI includes deterministic equal-date fixtures and offline semantic retrieval
+controls (literal miss, semantic hit, unrelated negative, exact quote/slice,
+revision and ACL/path). These validate retrieval plumbing, not real-model
+relevance. Real embeddings still need a deployment-specific evaluation set.

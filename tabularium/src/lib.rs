@@ -11,7 +11,9 @@
 
 mod error;
 mod search_kind;
+mod search_options;
 pub use search_kind::SearchKind;
+pub use search_options::{SearchOptions, SearchSort};
 pub mod jsonrpc_codes;
 mod validation;
 

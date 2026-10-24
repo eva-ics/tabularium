@@ -308,3 +308,178 @@ async fn failed_rebuild_preserves_active_index_and_scoped_reindex_isolated() {
     );
     task.abort();
 }
+
+/// Synthetic meaning fixture: retrieval contract, not a benchmark of a real model.
+#[tokio::test]
+async fn search_time_order_filters_ties_and_semantic_excerpts() {
+    use crate::{SearchOptions, SearchSort};
+    let temp = tempfile::tempdir().unwrap();
+    let (url, _offline, task) = mock().await;
+    let db = open(temp.path(), &url).await;
+    db.create_directory("/public", None, false).await.unwrap();
+    db.create_directory("/private", None, false).await.unwrap();
+    let source = "Title\nUse the backup to restart.\n";
+    // Creation/ID order deliberately differs from canonical path and modification order.
+    let mut ids = Vec::new();
+    for (path, name) in [
+        ("/public", "z"),
+        ("/public", "b"),
+        ("/public", "a"),
+        ("/private", "hidden"),
+    ] {
+        ids.push(
+            db.create_file_in_directory(path, name, source)
+                .await
+                .unwrap(),
+        );
+    }
+    let dessert = db
+        .create_file_in_directory("/public", "dessert", "apple cake recipe")
+        .await
+        .unwrap();
+    let pool = sqlx::SqlitePool::connect(&format!(
+        "sqlite://{}",
+        temp.path().join("source.db").display()
+    ))
+    .await
+    .unwrap();
+    sqlx::query("UPDATE entries SET modified_at = 50 WHERE id = ?")
+        .bind(dessert.raw())
+        .execute(&pool)
+        .await
+        .unwrap();
+    for (id, ns) in ids.iter().zip([100_i64, 200, 200, 300]) {
+        sqlx::query("UPDATE entries SET modified_at = ? WHERE id = ?")
+            .bind(ns)
+            .bind(id.raw())
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    db.reindex_kind(None, SearchKind::Hybrid).await.unwrap();
+    while db.flush_semantic_pending().await.unwrap() > 0 {}
+    let acl = AuthContext::new("public".into(),
+        parse_acl_json(r#"{"admin":false,"allow":{"read":["/public/*"],"write":[]},"deny":{"read":["/private/*"],"write":[]}}"#).unwrap());
+    // Both engines must filter before top-k; newest private hit must not affect truncation.
+    for kind in [
+        SearchKind::Lexical,
+        SearchKind::Semantic,
+        SearchKind::Hybrid,
+    ] {
+        let query = if kind == SearchKind::Lexical {
+            "backup"
+        } else {
+            "recover"
+        };
+        let options = SearchOptions {
+            sort: SearchSort::ModifiedDesc,
+            ..Default::default()
+        };
+        let report = db
+            .search_report_with_options(query, None, 1, None, kind, Some(&acl), options)
+            .await
+            .unwrap();
+        assert_eq!(report.hits()[0].path(), "/public/a");
+        assert!(report.has_more());
+        let bounded = SearchOptions {
+            modified_after: Some(99),
+            modified_before: Some(200),
+            ..options
+        };
+        let report = db
+            .search_report_with_options(query, None, 1, None, kind, Some(&acl), bounded)
+            .await
+            .unwrap();
+        assert_eq!(report.hits()[0].path(), "/public/z");
+        assert!(!report.has_more());
+        let empty = SearchOptions {
+            modified_after: Some(200),
+            modified_before: Some(200),
+            ..options
+        };
+        assert!(
+            db.search_report_with_options(query, None, 1, None, kind, Some(&acl), empty)
+                .await
+                .unwrap()
+                .hits()
+                .is_empty()
+        );
+        let report = db
+            .search_report_with_options(
+                query,
+                Some("/public"),
+                10,
+                Some(ids[1]),
+                kind,
+                Some(&acl),
+                options,
+            )
+            .await
+            .unwrap();
+        assert_eq!(report.hits().len(), 1);
+        assert_eq!(report.hits()[0].document_id(), ids[1]);
+    }
+    let lexical = db
+        .search_report(
+            "recover",
+            Some("/public"),
+            10,
+            None,
+            SearchKind::Lexical,
+            Some(&acl),
+        )
+        .await
+        .unwrap();
+    assert!(lexical.hits().is_empty());
+    let semantic = db
+        .search_report(
+            "recover",
+            Some("/public"),
+            10,
+            None,
+            SearchKind::Semantic,
+            Some(&acl),
+        )
+        .await
+        .unwrap();
+    // Semantic search ranks all candidates, without an absolute relevance cutoff.
+    // Expected sources rank above the unrelated negative; a large limit still returns it.
+    assert_eq!(semantic.hits().len(), 4);
+    assert_eq!(semantic.hits()[3].path(), "/public/dessert");
+    assert!(semantic.hits()[0].score() > semantic.hits()[3].score());
+    assert_eq!(semantic.hits()[0].path(), "/public/a"); // equal scores use path, not creation order
+    for hit in &semantic.hits()[..3] {
+        assert_eq!(hit.snippet(), source);
+        let (text, revision) = db
+            .document_slice_versioned(
+                hit.document_id(),
+                hit.start_line().unwrap() as u32,
+                hit.line_end().unwrap() as u32,
+                hit.revision(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(text, source.trim_end_matches('\n'));
+        assert_eq!(Some(revision.as_str()), hit.revision());
+    }
+    let invalid = SearchOptions {
+        modified_after: Some(201),
+        modified_before: Some(200),
+        ..Default::default()
+    };
+    assert!(
+        db.search_report_with_options(
+            "recover",
+            None,
+            1,
+            None,
+            SearchKind::Semantic,
+            None,
+            invalid
+        )
+        .await
+        .is_err()
+    );
+    pool.close().await;
+    task.abort();
+}

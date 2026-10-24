@@ -20,6 +20,33 @@ jobs:
         run: cd ui && npm ci && npm run build
       - name: cargo test
         run: cargo test --workspace --release
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Search transport regression tests
+        run: |
+          set -euo pipefail
+          cargo build --workspace --release
+          python -m pip install -r requirements-dev.txt
+          TEST_DIR="$(mktemp -d)"
+          cat > "$TEST_DIR/config.toml" <<EOF
+          [server]
+          listen = "127.0.0.1:13050"
+          database_path = "$TEST_DIR/source.db"
+          index_dir = "$TEST_DIR/index"
+          workers = 1
+          EOF
+          target/release/tabularium-server --config "$TEST_DIR/config.toml" > "$TEST_DIR/server.log" 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" 2>/dev/null || true; cat "$TEST_DIR/server.log"' EXIT
+          export TABULARIUM_TEST_URL=http://127.0.0.1:13050
+          export TABULARIUM_TB_BIN="$PWD/target/release/tb"
+          for attempt in $(seq 1 60); do
+            if curl -fsS "$TABULARIUM_TEST_URL/api/doc" >/dev/null; then break; fi
+            sleep 1
+          done
+          # No Selenium here: browser tests only run on the dedicated integration host.
+          python -m pytest tests/test_search_options.py tests/test_search_bounded.py -v
   fmt:
     runs-on: ubuntu-latest
     steps:

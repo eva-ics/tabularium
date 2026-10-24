@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Adds deterministic relevance/modified-descending search ordering and exclusive
+  UNIX-nanosecond modification bounds across REST/RPC/MCP/CLI and Web UI.
+- Filters authorized candidates before top-k selection; no source schema migration.
+- Adds CI regressions for time bounds, tie ordering, transports and semantic
+  retrieval/exact-source contracts using an offline embeddings fixture.
+
 - Adds bounded, versioned search with limit, JSON byte budget, explicit omission
   flags, exact excerpts, revision and modification time across RPC/REST/MCP/CLI.
 - Adds revision-checked slice reads and CLI structured search output.

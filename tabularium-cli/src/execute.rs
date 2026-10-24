@@ -891,6 +891,9 @@ pub(crate) async fn execute(
             kind,
             limit,
             max_output_bytes,
+            sort,
+            modified_after,
+            modified_before,
             json,
         } => {
             let q = query.join(" ");
@@ -904,12 +907,17 @@ pub(crate) async fn execute(
                 }
             };
             let report = client
-                .search_bounded(
+                .search_with_options(
                     &q,
                     dir.as_deref().map(std::path::Path::new),
                     kind,
                     limit,
                     max_output_bytes,
+                    tabularium::SearchOptions {
+                        sort,
+                        modified_after,
+                        modified_before,
+                    },
                 )
                 .await?;
             if !matches!(

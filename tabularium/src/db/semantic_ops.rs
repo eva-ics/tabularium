@@ -186,6 +186,7 @@ impl<S: Storage> Database<S> {
         limit: usize,
         only: Option<EntryId>,
         auth: Option<&AuthContext>,
+        options: crate::SearchOptions,
     ) -> Result<Vec<SearchHit>> {
         if limit == 0 {
             return Ok(Vec::new());
@@ -197,9 +198,42 @@ impl<S: Storage> Database<S> {
         let candidates = index
             .candidates(query, path, only.map(EntryId::raw))
             .await?;
+        // Rank authorized current metadata before reading source bodies.
+        let mut eligible = Vec::new();
+        for c in candidates {
+            let meta = match self.storage.get_file_meta(EntryId::from(c.id)).await {
+                Ok(m) => m,
+                Err(Error::NotFound(_)) => continue,
+                Err(e) => return Err(e),
+            };
+            let current_path = meta.canonical_path();
+            if meta.revision() != Some(c.revision.as_str())
+                || !options.matches_modified(meta.modified_at().as_nanos())
+                || auth.is_some_and(|a| a.check_read_abs(current_path).is_err())
+                || path
+                    .filter(|p| *p != "/" && !p.is_empty())
+                    .is_some_and(|prefix| {
+                        !current_path.starts_with(&format!("{}/", prefix.trim_end_matches('/')))
+                    })
+            {
+                continue;
+            }
+            eligible.push((c, meta));
+        }
+        eligible.sort_by(|a, b| {
+            let order = match options.sort {
+                crate::SearchSort::Relevance => b.0.score.total_cmp(&a.0.score),
+                crate::SearchSort::ModifiedDesc => b.1.modified_at().cmp(&a.1.modified_at()),
+            };
+            order
+                .then_with(|| a.1.canonical_path().cmp(b.1.canonical_path()))
+                .then_with(|| a.0.id.cmp(&b.0.id))
+                .then_with(|| b.0.score.total_cmp(&a.0.score))
+                .then_with(|| a.0.start.cmp(&b.0.start))
+        });
         let mut seen = HashSet::new();
         let mut hits = Vec::new();
-        for c in candidates {
+        for (c, candidate_meta) in eligible {
             if seen.contains(&c.id) {
                 continue;
             }
@@ -227,7 +261,10 @@ impl<S: Storage> Database<S> {
                 ));
             };
             let meta = self.storage.get_file_meta(EntryId::from(c.id)).await?;
-            if meta.revision() != Some(doc.revision.as_str()) || meta.canonical_path() != doc.path {
+            if meta.revision() != Some(doc.revision.as_str())
+                || meta.canonical_path() != doc.path
+                || meta.modified_at() != candidate_meta.modified_at()
+            {
                 continue;
             }
             hits.push(
@@ -258,13 +295,38 @@ impl<S: Storage> Database<S> {
         kind: SearchKind,
         auth: Option<&AuthContext>,
     ) -> Result<SearchReport> {
+        self.search_report_with_options(
+            query,
+            path,
+            limit,
+            only,
+            kind,
+            auth,
+            crate::SearchOptions::default(),
+        )
+        .await
+    }
+
+    /// Filter and order authorized source-validated candidates before applying the result limit.
+    #[allow(clippy::too_many_arguments)] // Additive variant keeps the existing public API compatible.
+    pub async fn search_report_with_options(
+        &self,
+        query: &str,
+        path: Option<&str>,
+        limit: usize,
+        only: Option<EntryId>,
+        kind: SearchKind,
+        auth: Option<&AuthContext>,
+        options: crate::SearchOptions,
+    ) -> Result<SearchReport> {
+        options.validate()?;
         let requested_limit = limit;
         let limit = limit.saturating_add(1);
         let lexical = async {
             if kind == SearchKind::Semantic {
                 return Ok(Vec::new());
             }
-            self.search_hits_authorized(query, path, limit, only, auth)
+            self.search_hits_authorized(query, path, limit, only, auth, options)
                 .await
         };
         let semantic = async {
@@ -279,7 +341,7 @@ impl<S: Storage> Database<S> {
                 .search_timeout;
             tokio::time::timeout(
                 Duration::from_secs(timeout),
-                self.semantic_hits(query, path, limit, only, auth),
+                self.semantic_hits(query, path, limit, only, auth, options),
             )
             .await
             .map_err(|_| Error::Search("semantic search timed out".into()))?
@@ -350,9 +412,21 @@ impl<S: Storage> Database<S> {
                     .total_cmp(&a.score())
                     .then_with(|| a.path().cmp(b.path()))
             });
-            all.truncate(limit);
             all
         };
+        hits.retain(|h| {
+            h.modified_at()
+                .is_some_and(|t| options.matches_modified(t.as_nanos()))
+        });
+        hits.sort_by(|a, b| {
+            let order = match options.sort {
+                crate::SearchSort::Relevance => b.score().total_cmp(&a.score()),
+                crate::SearchSort::ModifiedDesc => b.modified_at().cmp(&a.modified_at()),
+            };
+            order
+                .then_with(|| a.path().cmp(b.path()))
+                .then_with(|| a.document_id().raw().cmp(&b.document_id().raw()))
+        });
         let has_more = hits.len() > requested_limit;
         hits.truncate(requested_limit);
         Ok(SearchReport {

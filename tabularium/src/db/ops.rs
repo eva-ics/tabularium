@@ -267,6 +267,7 @@ impl<S: Storage> Database<S> {
             limit,
             restrict_to_document,
             None,
+            crate::SearchOptions::default(),
         )
         .await
     }
@@ -278,6 +279,7 @@ impl<S: Storage> Database<S> {
         limit: usize,
         restrict_to_document: Option<EntryId>,
         auth: Option<&crate::AuthContext>,
+        options: crate::SearchOptions,
     ) -> Result<Vec<SearchHit>> {
         let norm = directory_prefix
             .map(str::trim)
@@ -287,22 +289,37 @@ impl<S: Storage> Database<S> {
             .search
             .search_scored(keywords, norm, restrict_to_document)
             .await?;
-        let mut hits = Vec::new();
+        let mut candidates = Vec::new();
         for (id, score) in scored {
-            if hits.len() >= limit {
-                break;
-            }
-            let before = match self.storage.get_file_meta(id).await {
+            let meta = match self.storage.get_file_meta(id).await {
                 Ok(m) => m,
                 Err(Error::NotFound(_)) => continue,
                 Err(e) => return Err(e),
             };
-            let path = before.canonical_path();
+            let path = meta.canonical_path();
             if norm.is_some_and(|p| !path.starts_with(&format!("{p}/")))
                 || auth.is_some_and(|a| a.check_read_abs(path).is_err())
+                || !options.matches_modified(meta.modified_at().as_nanos())
             {
                 continue;
             }
+            candidates.push((id, score, meta));
+        }
+        candidates.sort_by(|a, b| {
+            let order = match options.sort {
+                crate::SearchSort::Relevance => b.1.total_cmp(&a.1),
+                crate::SearchSort::ModifiedDesc => b.2.modified_at().cmp(&a.2.modified_at()),
+            };
+            order
+                .then_with(|| a.2.canonical_path().cmp(b.2.canonical_path()))
+                .then_with(|| a.0.raw().cmp(&b.0.raw()))
+        });
+        let mut hits = Vec::new();
+        for (id, score, before) in candidates {
+            if hits.len() >= limit {
+                break;
+            }
+            let path = before.canonical_path();
             let content = self.storage.get_file_content(id).await?;
             let after = self.storage.get_file_meta(id).await?;
             if before.revision() != after.revision()
@@ -320,11 +337,6 @@ impl<S: Storage> Database<S> {
             }
             hits.push(hit);
         }
-        hits.sort_by(|a, b| {
-            b.score()
-                .total_cmp(&a.score())
-                .then_with(|| a.path().cmp(b.path()))
-        });
         Ok(hits)
     }
 

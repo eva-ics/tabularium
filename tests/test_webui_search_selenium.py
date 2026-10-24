@@ -765,3 +765,30 @@ def test_search_kind_selector_refetches_and_preserves_scope(
     _wait_for_search_hits(d)
     d.set_window_size(390, 844)
     assert d.execute_script("return document.documentElement.scrollWidth <= window.innerWidth")
+
+
+def test_search_order_and_time_controls_refetch(selenium_driver, tabularium_base_url, seed_search_hierarchy):
+    d = selenium_driver
+    seed = seed_search_hierarchy
+    d.get(_entries_url(tabularium_base_url, seed["root"], "inner"))
+    _wait_app_ready(d)
+    Select(d.find_element(By.CSS_SELECTOR, "[data-testid='search-kind']")).select_by_value("lexical")
+    _fire_search(d, seed["tok_sub"])
+    _wait_for_search_hits(d)
+    Select(d.find_element(By.CSS_SELECTOR, "[data-testid='search-sort']")).select_by_value("modified_desc")
+    def last_params():
+        urls = d.execute_script("return performance.getEntriesByType('resource').map(e => e.name).filter(n => n.includes('/api/search?'))")
+        return parse_qs(urlparse(urls[-1]).query) if urls else {}
+    _wait(d).until(lambda _: last_params().get("sort") == ["modified_desc"])
+    field = d.find_element(By.CSS_SELECTOR, "[data-testid='search-modified-after']")
+    d.execute_script("""
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+        setter.call(arguments[0], '2020-01-01T00:00');
+        arguments[0].dispatchEvent(new Event('input', {bubbles:true}));
+    """, field)
+    _wait(d).until(lambda _: "modified_after" in last_params())
+    assert int(last_params()["modified_after"][0]) > 10**18
+    assert "dir" in last_params()
+    _wait_for_search_hits(d)
+    d.set_window_size(390, 844)
+    assert d.execute_script("return document.documentElement.scrollWidth <= window.innerWidth")

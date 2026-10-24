@@ -280,6 +280,15 @@ pub(crate) enum Command {
         /// Limit hits to this directory subtree.
         #[arg(short = 'd', long = "directory")]
         directory: Option<String>,
+        /// Order: relevance or modified_desc (ties use canonical path).
+        #[arg(long, default_value = "relevance")]
+        sort: tabularium::SearchSort,
+        /// Exclusive lower modification-time bound in UNIX nanoseconds.
+        #[arg(long)]
+        modified_after: Option<u64>,
+        /// Exclusive upper modification-time bound in UNIX nanoseconds.
+        #[arg(long)]
+        modified_before: Option<u64>,
         /// Query string.
         query: Vec<String>,
     },
