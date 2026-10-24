@@ -8,8 +8,7 @@ from urllib.parse import urlparse
 import pytest
 
 # Selenium Web UI tests MUST target this host only (Enginseer doctrine — no loopback).
-# Override with TABULARIUM_SELENIUM_HOST for local e2e when the integration host is unreachable.
-SELENIUM_TEST_HOST = os.environ.get("TABULARIUM_SELENIUM_HOST", "10.90.1.102")
+SELENIUM_TEST_HOST = "10.90.1.102"
 
 
 def pytest_configure(config) -> None:
