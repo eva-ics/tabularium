@@ -1200,7 +1200,9 @@ pub async fn serve(
     let service = StreamableHttpService::new(
         move || Ok(template.clone()),
         Arc::new(LocalSessionManager::default()),
-        StreamableHttpServerConfig::default().with_cancellation_token(cancel),
+        StreamableHttpServerConfig::default()
+            .disable_allowed_hosts()
+            .with_cancellation_token(cancel),
     );
     let router = Router::new().nest_service("/mcp", service);
     info!(

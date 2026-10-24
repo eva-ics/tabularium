@@ -41,6 +41,8 @@
 
 ### Fixed
 
+- Restore MCP access using non-loopback Host headers after the transport SDK
+  update, matching EVA MCP behavior; PSK/OIDC authentication and ACLs are unchanged.
 - Makes Web UI path copying more reliable with a local clipboard helper, a
   selection-based fallback, and manual copying when browser access is denied.
 
