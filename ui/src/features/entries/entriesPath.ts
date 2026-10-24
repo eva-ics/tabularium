@@ -25,15 +25,6 @@ function absFromPathname(pathname: string): string {
   return segments.length === 0 ? "/" : `/${segments.join("/")}`;
 }
 
-/** Last segment looks like a file name (`notes.md`, `.gitignore`), not `.` / `..`. */
-function looksLikeDocumentName(name: string): boolean {
-  if (name === "." || name === "..") {
-    return false;
-  }
-  return name.includes(".");
-}
-
-
 /** Document directory path from location (always a directory in the URL). */
 export function dirPathFromEntriesLocation(pathname: string): string {
   if (pathname === PREFIX || pathname === `${PREFIX}/`) {
@@ -72,20 +63,43 @@ export function withOpenDocQuery(
   return `${path}?${q.toString()}`;
 }
 
-/**
- * Maps a human librarium URL (`/projects/…/doc.md`) to the entries browser route.
- * Last path segment containing `.` is treated as a document; otherwise a directory.
- */
-export function entriesUrlFromLibrariumPathname(pathname: string): string {
+/** Absolute path, parent directory, and last segment of a human librarium URL. */
+export interface LibrariumTarget {
+  abs: string;
+  parent: string;
+  name: string;
+}
+
+/** Splits a human librarium URL (`/a/b` → `/a`, `b`); `null` for the root. */
+export function librariumTargetFromPathname(
+  pathname: string,
+): LibrariumTarget | null {
   const abs = absFromPathname(pathname);
   if (abs === "/") {
-    return PREFIX;
+    return null;
   }
   const slash = abs.lastIndexOf("/");
-  const name = abs.slice(slash + 1);
-  if (looksLikeDocumentName(name)) {
-    const dirPath = slash <= 0 ? "/" : abs.slice(0, slash);
-    return withOpenDocQuery(dirPath, abs);
+  return {
+    abs,
+    parent: slash <= 0 ? "/" : abs.slice(0, slash),
+    name: abs.slice(slash + 1),
+  };
+}
+
+/**
+ * Maps a human librarium URL (`/projects/…/doc.md`) to the entries browser route.
+ * `isDocument` must come from the server entry kind, not from the segment name.
+ */
+export function entriesUrlFromLibrariumPathname(
+  pathname: string,
+  isDocument: boolean,
+): string {
+  const target = librariumTargetFromPathname(pathname);
+  if (target === null) {
+    return PREFIX;
   }
-  return entriesPathForDir(abs);
+  if (isDocument) {
+    return withOpenDocQuery(target.parent, target.abs);
+  }
+  return entriesPathForDir(target.abs);
 }

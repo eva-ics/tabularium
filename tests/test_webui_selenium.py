@@ -410,6 +410,53 @@ def test_spa_librarium_abs_path_opens_directory(
     assert "open=" not in selenium_driver.current_url
 
 
+def test_spa_librarium_abs_path_version_dir_opens_directory(
+    selenium_driver, tabularium_base_url,
+):
+    slug = uuid.uuid4().hex[:8]
+    name = f"releases_{slug}"
+    mkdir(tabularium_base_url, name)
+    base = tabularium_base_url.rstrip("/")
+    requests.post(
+        f"{base}/api/doc",
+        json={"path": f"/{name}/v0.1", "description": None},
+        timeout=15,
+    ).raise_for_status()
+    selenium_driver.get(f"{base}/{name}/v0.1/")
+    _wait_app_ready(selenium_driver)
+    _wait(selenium_driver).until(
+        EC.text_to_be_present_in_element(
+            (By.CSS_SELECTOR, "[data-testid='entries-path']"),
+            f"/{name}/v0.1",
+        ),
+    )
+    assert "open=" not in selenium_driver.current_url
+
+
+def test_spa_librarium_abs_path_extensionless_document(
+    selenium_driver, tabularium_base_url,
+):
+    slug = uuid.uuid4().hex[:8]
+    name = f"noext_{slug}"
+    mkdir(tabularium_base_url, name)
+    base = tabularium_base_url.rstrip("/")
+    marker = f"noext-open-{slug}"
+    requests.post(
+        f"{base}/api/doc/{name}",
+        json={"name": "Makefile", "content": f"# {marker}\n"},
+        timeout=15,
+    ).raise_for_status()
+    selenium_driver.get(f"{base}/{name}/Makefile")
+    _wait_app_ready(selenium_driver)
+    _wait(selenium_driver).until(lambda d: "open=" in d.current_url)
+    _wait(selenium_driver).until(
+        EC.text_to_be_present_in_element(
+            (By.CSS_SELECTOR, "[data-testid='preview-pane']"),
+            marker,
+        ),
+    )
+
+
 # --- Group E — infrastructure ---
 
 
