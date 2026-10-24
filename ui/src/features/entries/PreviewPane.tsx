@@ -399,7 +399,7 @@ export const PreviewPane = forwardRef<HTMLDivElement, PreviewPaneProps>(
               {pathLabel && !editMode ? (
                 <button type="button" className={styles.rawToggle} data-testid="preview-meta"
                   aria-pressed={metaMode} disabled={loading}
-                  onClick={() => setMetaMode((value) => !value)}>{metaMode ? "Back" : "Meta"}</button>
+                  onClick={() => setMetaMode((value) => !value)}>{metaMode ? "File" : "Meta"}</button>
               ) : null}
               {showFullscreenToggle ? (
                 <button

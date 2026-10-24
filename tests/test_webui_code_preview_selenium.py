@@ -89,9 +89,16 @@ def test_metadata_readonly_and_full_preview_path(selenium_driver, tabularium_bas
     wait = open_preview(d, tabularium_base_url, name, "# Body stays separate")
     title = wait.until(lambda d: d.find_element(By.CSS_SELECTOR, "[data-testid='preview-path']"))
     path = title.get_attribute("textContent")
+    copy_button = d.find_element(By.CSS_SELECTOR, "[title='Copy path']")
+    assert copy_button.is_displayed()
+    assert copy_button.is_enabled()
+    copy_button.click()
+    wait.until(lambda d: copy_button.text == "✓")
+    assert d.find_element(By.CSS_SELECTOR, "[data-testid='preview-meta']").text == "Meta"
     metadata = {"status": "draft", "tags": ["previewtest"], "unsafe": "<img src=x onerror=alert(1)>"}
     assert "result" in _rpc("set_document_metadata", {"path": path, "metadata": metadata})
     d.find_element(By.CSS_SELECTOR, "[data-testid='preview-meta']").click()
+    assert d.find_element(By.CSS_SELECTOR, "[data-testid='preview-meta']").text == "File"
     panel = wait.until(lambda d: d.find_element(By.CSS_SELECTOR, "[data-testid='preview-metadata'] pre"))
     import json
     assert json.loads(panel.get_attribute("textContent")) == metadata
@@ -104,4 +111,5 @@ def test_metadata_readonly_and_full_preview_path(selenium_driver, tabularium_bas
     assert d.execute_script("return arguments[0].scrollWidth <= arguments[0].clientWidth + 1", actions)
     d.find_element(By.CSS_SELECTOR, "[data-testid='preview-meta']").click()
     wait.until(lambda d: d.find_element(By.CSS_SELECTOR, "[data-testid='preview-pane'] h1"))
+    assert d.find_element(By.CSS_SELECTOR, "[data-testid='preview-meta']").text == "Meta"
     d.set_window_size(1280, 900)
