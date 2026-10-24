@@ -12,7 +12,7 @@ When you use `say_document` through JSON-RPC or MCP, the nickname is taken from 
 
 That means chat is not a separate storage system. The transcript is the document body, so the same file can still be previewed, edited, searched, exported, or read through RPC/MCP.
 
-Typical uses are meeting scrolls, operator notes, and lightweight human or machine-spirit conversations.
+Typical uses are meeting documents, operator notes, and lightweight human or AI-agent conversations.
 
 ## Entry Points
 
@@ -38,7 +38,7 @@ Typical uses are meeting scrolls, operator notes, and lightweight human or machi
 - CLI TUI: `Enter` sends, `Shift+Enter` inserts a newline, `Ctrl+E` opens `$EDITOR` for the current draft, `Ctrl+C` interrupts chat.
 - CLI line mode: when stdin/stdout is not a TTY, `tb chat` falls back to plain line input and still accepts the CLI slash commands above.
 
-## Related Rites
+## Related Commands
 
 - Use `say_document` when you want the same chat-style append behavior through JSON-RPC or MCP.
 - Use `append_document` only for raw text appends; it does not record a speaker.

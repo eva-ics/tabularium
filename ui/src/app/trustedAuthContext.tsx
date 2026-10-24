@@ -6,7 +6,7 @@ export interface TabulariumTrustedAuthValue {
   authenticateApi: boolean;
   /** `[oidc]` on server — Web UI skips PSK gate (proxy supplies JWT assertion). */
   oidcAssertionAuth: boolean;
-  /** Clears cookie + session PSK and returns to the gate — the Emperor revokes this seal. */
+  /** Clears cookie + session PSK and returns to the gate when authentication is cleared. */
   logoutPskSession: () => void;
 }
 

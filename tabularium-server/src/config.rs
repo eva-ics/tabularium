@@ -11,6 +11,9 @@ use tabularium::{Error, Result};
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub server: ServerSection,
+    /// Optional OpenAI-compatible embeddings endpoint and derived sidecar.
+    #[serde(default)]
+    pub semantic: Option<tabularium::SemanticConfig>,
     #[serde(default)]
     pub mcp: Option<McpSection>,
     /// Signed assertion from upstream AAA/WAF — JWKS `key` URL/path, validated locally (see meeting `oidc`).
@@ -102,5 +105,6 @@ pub struct ServerSection {
 pub fn load(path: &Path) -> Result<Config> {
     let raw = std::fs::read_to_string(path)
         .map_err(|e| Error::Io(format!("config {}: {e}", path.display())))?;
-    toml::from_str(&raw).map_err(|e| Error::InvalidInput(format!("config {}: {e}", path.display())))
+    toml::from_str(&raw)
+        .map_err(|e| Error::InvalidInput(format!("config {}: {}", path.display(), e.message())))
 }

@@ -203,15 +203,88 @@ impl Client {
         query: impl AsRef<str>,
         subtree: Option<&Path>,
     ) -> Result<Vec<SearchHitRow>> {
-        let params = match subtree {
-            None => json!({ "query": query.as_ref() }),
-            Some(p) => {
-                let ps = normalize_path_for_rpc(p)?;
-                json!({ "query": query.as_ref(), "path": ps })
+        Ok(self
+            .search_with_kind(query, subtree, crate::SearchKind::default())
+            .await?
+            .into_hits())
+    }
+
+    /// Search selected engines and retain degraded/partial status information.
+    pub async fn search_with_kind(
+        &self,
+        query: impl AsRef<str>,
+        subtree: Option<&Path>,
+        kind: crate::SearchKind,
+    ) -> Result<SearchReportRow> {
+        self.search_bounded(query, subtree, kind, None, None).await
+    }
+
+    /// Bounded search; the server reports omitted results explicitly.
+    pub async fn search_bounded(
+        &self,
+        query: impl AsRef<str>,
+        subtree: Option<&Path>,
+        kind: crate::SearchKind,
+        limit: Option<usize>,
+        max_output_bytes: Option<usize>,
+    ) -> Result<SearchReportRow> {
+        self.search_with_options(
+            query,
+            subtree,
+            kind,
+            limit,
+            max_output_bytes,
+            crate::SearchOptions::default(),
+        )
+        .await
+    }
+
+    /// Bounded search with deterministic ordering and exclusive UNIX-nanosecond time bounds.
+    pub async fn search_with_options(
+        &self,
+        query: impl AsRef<str>,
+        subtree: Option<&Path>,
+        kind: crate::SearchKind,
+        limit: Option<usize>,
+        max_output_bytes: Option<usize>,
+        options: crate::SearchOptions,
+    ) -> Result<SearchReportRow> {
+        options.validate()?;
+        let mut params = json!({"query":query.as_ref(),"kind":kind,"with_status":true,
+            "sort": options.sort});
+        if let Some(n) = options.modified_after {
+            params["modified_after"] = json!(n);
+        }
+        if let Some(n) = options.modified_before {
+            params["modified_before"] = json!(n);
+        }
+        if let Some(n) = limit {
+            params["limit"] = json!(n);
+        }
+        if let Some(n) = max_output_bytes {
+            params["max_output_bytes"] = json!(n);
+        }
+        if let Some(path) = subtree {
+            params["path"] = json!(normalize_path_for_rpc(path)?);
+        }
+        let value = self.call("search", params).await?;
+        // Older servers return an array and do not expose engine status.
+        if value.is_array() {
+            if kind == crate::SearchKind::Semantic {
+                return Err(Error::Search(
+                    "server does not support explicit semantic search".into(),
+                ));
             }
-        };
-        let r = self.call("search", params).await?;
-        serde_json::from_value(r).map_err(|e| Error::InvalidInput(e.to_string()))
+            return Ok(SearchReportRow {
+                hits: serde_json::from_value(value)
+                    .map_err(|e| Error::InvalidInput(e.to_string()))?,
+                lexical_status: "ready".into(),
+                semantic_status: "unsupported".into(),
+                has_more: false,
+                truncated: false,
+            });
+        }
+        serde_json::from_value(value).map_err(|e| Error::InvalidInput(e.to_string()))
     }
 
     /// `exists` RPC — whether `path` resolves to an existing **file**.
@@ -228,6 +301,28 @@ impl Client {
         let params = json!({ "path": path });
         let r = self.call("get_document", params).await?;
         serde_json::from_value(r).map_err(|e| Error::InvalidInput(e.to_string()))
+    }
+
+    /// Read JSON metadata and its shared document revision.
+    pub async fn get_document_metadata(&self, path: impl AsRef<Path>) -> Result<Value> {
+        let path = normalize_path_for_rpc(path)?;
+        self.call("get_document_metadata", json!({"path":path}))
+            .await
+    }
+
+    pub async fn set_document_metadata(
+        &self,
+        path: impl AsRef<Path>,
+        metadata: &Value,
+        only_if_revision: Option<&str>,
+    ) -> Result<()> {
+        let path = normalize_path_for_rpc(path)?;
+        self.call(
+            "set_document_metadata",
+            json!({"path":path,"metadata":metadata,"only_if_revision":only_if_revision}),
+        )
+        .await?;
+        Ok(())
     }
 
     /// `create_directory` RPC; `path` is absolute (e.g. `/notes`). `parents` matches POSIX `mkdir -p`.
@@ -496,9 +591,21 @@ impl Client {
         start_line: u32,
         end_line: u32,
     ) -> Result<String> {
+        self.document_slice_checked(path, start_line, end_line, None)
+            .await
+    }
+
+    pub async fn document_slice_checked(
+        &self,
+        path: impl AsRef<Path>,
+        start_line: u32,
+        end_line: u32,
+        expected_revision: Option<&str>,
+    ) -> Result<String> {
         let path = normalize_path_for_rpc(path)?;
         let params = json!({
             "path": path,
+            "expected_revision": expected_revision,
             "start_line": start_line,
             "end_line": end_line,
         });
@@ -535,10 +642,40 @@ impl Client {
         serde_json::from_value(r).map_err(|e| Error::InvalidInput(e.to_string()))
     }
 
-    /// `wc` RPC.
+    /// `wc` RPC (single-file legacy shape only).
     pub async fn document_wc(&self, path: impl AsRef<Path>) -> Result<WcRow> {
         let path = normalize_path_for_rpc(path)?;
         let params = json!({ "path": path });
+        let r = self.call("wc", params).await?;
+        serde_json::from_value(r).map_err(|e| Error::InvalidInput(e.to_string()))
+    }
+
+    /// `wc` RPC with optional metric flags, glob paths, and recursive directory walk.
+    pub async fn wc(
+        &self,
+        path: impl AsRef<Path>,
+        filter: crate::wc::WcMetricsFilter,
+        recursive: bool,
+    ) -> Result<WcResponse> {
+        let path = normalize_path_for_rpc(path)?;
+        let mut params = json!({ "path": path });
+        if let Some(obj) = params.as_object_mut() {
+            if recursive {
+                obj.insert("recursive".into(), json!(true));
+            }
+            if filter.lines {
+                obj.insert("lines".into(), json!(true));
+            }
+            if filter.words {
+                obj.insert("words".into(), json!(true));
+            }
+            if filter.bytes {
+                obj.insert("bytes".into(), json!(true));
+            }
+            if filter.chars {
+                obj.insert("chars".into(), json!(true));
+            }
+        }
         let r = self.call("wc", params).await?;
         serde_json::from_value(r).map_err(|e| Error::InvalidInput(e.to_string()))
     }
@@ -649,14 +786,23 @@ impl Client {
 
     /// `reindex` RPC. `None` rebuilds the whole index from SQLite.
     pub async fn reindex(&self, path: Option<&Path>) -> Result<()> {
-        let params = match path {
-            None => json!({}),
-            Some(p) => {
-                let ps = normalize_path_for_rpc(p)?;
-                json!({ "path": ps })
-            }
-        };
-        self.call("reindex", params).await?;
+        self.reindex_with_kind(path, crate::SearchKind::default())
+            .await
+    }
+
+    /// Rebuild the selected engine(s); embedding a full corpus can take minutes.
+    pub async fn reindex_with_kind(
+        &self,
+        path: Option<&Path>,
+        kind: crate::SearchKind,
+    ) -> Result<()> {
+        let mut params = json!({"kind":kind});
+        if let Some(path) = path {
+            params["path"] = json!(normalize_path_for_rpc(path)?);
+        }
+        self.with_timeout(Duration::from_secs(3600))?
+            .call("reindex", params)
+            .await?;
         Ok(())
     }
 }
@@ -787,7 +933,7 @@ impl StatRow {
     }
 }
 
-/// `wc` RPC payload.
+/// `wc` RPC payload (single file, all metrics).
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct WcRow {
     bytes: u64,
@@ -811,6 +957,95 @@ impl WcRow {
 
     pub fn chars(&self) -> usize {
         self.chars
+    }
+}
+
+/// Partial metric row (`wc` with selective flags or batch `total`).
+#[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize)]
+pub struct WcMetrics {
+    #[serde(default)]
+    bytes: Option<u64>,
+    #[serde(default)]
+    lines: Option<usize>,
+    #[serde(default)]
+    words: Option<usize>,
+    #[serde(default)]
+    chars: Option<usize>,
+}
+
+impl WcMetrics {
+    pub fn bytes(&self) -> Option<u64> {
+        self.bytes
+    }
+
+    pub fn lines(&self) -> Option<usize> {
+        self.lines
+    }
+
+    pub fn words(&self) -> Option<usize> {
+        self.words
+    }
+
+    pub fn chars(&self) -> Option<usize> {
+        self.chars
+    }
+}
+
+/// One file row in a batch `wc` response.
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct WcFileEntry {
+    path: String,
+    #[serde(flatten)]
+    metrics: WcMetrics,
+}
+
+impl WcFileEntry {
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub fn metrics(&self) -> &WcMetrics {
+        &self.metrics
+    }
+}
+
+/// `wc` RPC response (single-file object or batch `{ files, total }`).
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct WcResponse {
+    #[serde(default)]
+    files: Option<Vec<WcFileEntry>>,
+    #[serde(default)]
+    total: Option<WcMetrics>,
+    #[serde(default)]
+    bytes: Option<u64>,
+    #[serde(default)]
+    lines: Option<usize>,
+    #[serde(default)]
+    words: Option<usize>,
+    #[serde(default)]
+    chars: Option<usize>,
+}
+
+impl WcResponse {
+    pub fn is_batch(&self) -> bool {
+        self.files.is_some()
+    }
+
+    pub fn files(&self) -> Option<&[WcFileEntry]> {
+        self.files.as_deref()
+    }
+
+    pub fn total(&self) -> Option<&WcMetrics> {
+        self.total.as_ref()
+    }
+
+    pub fn single_metrics(&self) -> WcMetrics {
+        WcMetrics {
+            bytes: self.bytes,
+            lines: self.lines,
+            words: self.words,
+            chars: self.chars,
+        }
     }
 }
 
@@ -914,6 +1149,38 @@ impl DocumentMetaRow {
     }
 }
 
+/// Search result with non-fatal engine availability information.
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct SearchReportRow {
+    hits: Vec<SearchHitRow>,
+    lexical_status: String,
+    semantic_status: String,
+    #[serde(default)]
+    has_more: bool,
+    #[serde(default)]
+    truncated: bool,
+}
+impl SearchReportRow {
+    pub fn has_more(&self) -> bool {
+        self.has_more
+    }
+    pub fn truncated(&self) -> bool {
+        self.truncated
+    }
+    pub fn hits(&self) -> &[SearchHitRow] {
+        &self.hits
+    }
+    pub fn into_hits(self) -> Vec<SearchHitRow> {
+        self.hits
+    }
+    pub fn lexical_status(&self) -> &str {
+        &self.lexical_status
+    }
+    pub fn semantic_status(&self) -> &str {
+        &self.semantic_status
+    }
+}
+
 /// Search hit from `search`.
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct SearchHitRow {
@@ -923,9 +1190,31 @@ pub struct SearchHitRow {
     score: f32,
     #[serde(default)]
     line_number: Option<usize>,
+    #[serde(default)]
+    line_end: Option<usize>,
+    #[serde(default)]
+    revision: Option<String>,
+    #[serde(default)]
+    modified_at: Option<Timestamp>,
+    #[serde(default)]
+    start_line: Option<usize>,
 }
 
 impl SearchHitRow {
+    pub fn start_line(&self) -> Option<usize> {
+        self.start_line.or(self.line_number)
+    }
+    pub fn modified_at(&self) -> Option<Timestamp> {
+        self.modified_at
+    }
+    /// Last source line in the excerpt, if provided by the server.
+    pub fn line_end(&self) -> Option<usize> {
+        self.line_end
+    }
+    /// Source revision, when the server supplied a versioned excerpt.
+    pub fn revision(&self) -> Option<&str> {
+        self.revision.as_deref()
+    }
     pub fn document_id(&self) -> EntryId {
         self.document_id
     }

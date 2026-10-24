@@ -1,4 +1,4 @@
-//! Upstream signed JWT assertions — JWKS refresh and local verification for the Throne.
+//! Upstream signed JWT assertions — JWKS refresh and local verification for access control.
 
 use std::sync::Arc;
 use std::time::Duration;

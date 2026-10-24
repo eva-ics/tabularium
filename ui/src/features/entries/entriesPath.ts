@@ -33,7 +33,8 @@ function looksLikeDocumentName(name: string): boolean {
   return name.includes(".");
 }
 
-/** Librarium dir path from location (always a directory in the URL). */
+
+/** Document directory path from location (always a directory in the URL). */
 export function dirPathFromEntriesLocation(pathname: string): string {
   if (pathname === PREFIX || pathname === `${PREFIX}/`) {
     return "/";

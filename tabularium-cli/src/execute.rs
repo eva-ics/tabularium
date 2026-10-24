@@ -7,17 +7,18 @@ use std::process::{Command as StdCommand, Stdio};
 use std::time::UNIX_EPOCH;
 
 use filetime::{FileTime, set_file_mtime};
-use globset::GlobBuilder;
 use regex::Regex;
 use serde_json::{Value, json};
 use tabularium::Error;
 use tabularium::TailMode;
 use tabularium::Timestamp;
+use tabularium::glob_path::{compile_name_glob, parent_and_glob_pattern, path_has_glob_metachar};
 use tabularium::parse_acl_json;
 use tabularium::resource_path::{normalize_user_path, parent_and_final_name};
-use tabularium::rpc::{Client, ListedEntryRow, SearchHitRow, StatRow};
+use tabularium::rpc::{Client, ListedEntryRow, SearchHitRow, StatRow, WcMetrics, WcResponse};
 use tabularium::validate_chat_speaker_id;
 use tabularium::validate_entity_name;
+use tabularium::wc::WcMetricsFilter;
 use tabularium::ws::RecvMessage;
 use tokio::io::AsyncBufReadExt;
 
@@ -25,6 +26,14 @@ use crate::Command;
 use crate::render::mad_skin;
 
 pub(crate) type BoxErr = Box<dyn std::error::Error + Send + Sync>;
+
+pub(crate) fn print_cli_message(msg: &str) {
+    let msg = msg
+        .strip_prefix("invalid input: ")
+        .or_else(|| msg.strip_prefix("not found: "))
+        .unwrap_or(msg);
+    eprintln!("{msg}");
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum ChatSubmitAction {
@@ -134,27 +143,12 @@ async fn expand_final_segment_glob(
     client: &Client,
     normalized_path: &str,
 ) -> Result<Option<Vec<(String, ListedEntryRow)>>, BoxErr> {
-    if normalized_path == "/" {
+    let Some((parent, pattern)) =
+        parent_and_glob_pattern(normalized_path).map_err(|e| -> BoxErr { e.to_string().into() })?
+    else {
         return Ok(None);
-    }
-    let (parent, last) = normalized_path
-        .rsplit_once('/')
-        .map(|(p, n)| {
-            let p = if p.is_empty() {
-                "/".to_string()
-            } else {
-                p.to_string()
-            };
-            (p, n.to_string())
-        })
-        .ok_or_else(|| -> BoxErr { "invalid path".into() })?;
-    if !path_has_glob_metachar(&last) {
-        return Ok(None);
-    }
-    if path_has_glob_metachar(&parent) {
-        return Err("wildcards are only allowed in the final path segment".into());
-    }
-    let matcher = compile_name_glob(&last)?;
+    };
+    let matcher = compile_name_glob(&pattern).map_err(|e| -> BoxErr { e.to_string().into() })?;
     let rows = client.list_directory(&parent).await?;
     let mut out: Vec<_> = rows
         .into_iter()
@@ -166,6 +160,77 @@ async fn expand_final_segment_glob(
         return Err(format!("no entries match {normalized_path}").into());
     }
     Ok(Some(out))
+}
+
+fn wc_metric_values(m: &WcMetrics, filter: WcMetricsFilter) -> Vec<String> {
+    filter.format_optional_counts(m.lines(), m.words(), m.bytes(), m.chars())
+}
+
+fn print_wc_gnu_line(width: usize, values: &[String], label: &str) {
+    let counts = values.join("\t");
+    if label.is_empty() {
+        println!("{counts}");
+    } else {
+        println!("{counts:>width$} {label}", width = width.max(1));
+    }
+}
+
+fn print_wc_output(resp: &WcResponse, filter: WcMetricsFilter) -> Result<(), BoxErr> {
+    let tty = io::stdout().is_terminal();
+    let multi = resp.is_batch();
+
+    if multi {
+        let files = resp.files().unwrap_or(&[]);
+        let total = resp.total().cloned().unwrap_or_default();
+        let mut rows_for_width: Vec<Vec<String>> = Vec::new();
+        for f in files {
+            rows_for_width.push(wc_metric_values(f.metrics(), filter));
+        }
+        rows_for_width.push(wc_metric_values(&total, filter));
+        let width = rows_for_width
+            .iter()
+            .flat_map(|r| r.iter().map(String::len))
+            .max()
+            .unwrap_or(1);
+
+        if tty && filter.active_columns() > 1 {
+            let headers = filter.column_labels();
+            let mut table_rows: Vec<Vec<String>> = files
+                .iter()
+                .map(|f| {
+                    let mut row = vec![f.path().to_string()];
+                    row.extend(wc_metric_values(f.metrics(), filter));
+                    row
+                })
+                .collect();
+            let mut total_row = vec!["total".to_string()];
+            total_row.extend(wc_metric_values(&total, filter));
+            table_rows.push(total_row);
+            let mut hdr = vec!["path"];
+            hdr.extend(headers);
+            print_cli_table(true, &hdr, &table_rows);
+            return Ok(());
+        }
+
+        for f in files {
+            print_wc_gnu_line(width, &wc_metric_values(f.metrics(), filter), f.path());
+        }
+        print_wc_gnu_line(width, &wc_metric_values(&total, filter), "total");
+        return Ok(());
+    }
+
+    let m = resp.single_metrics();
+    let values = wc_metric_values(&m, filter);
+    if tty && filter.active_columns() > 1 {
+        print_cli_table(true, &filter.column_labels(), &[values]);
+        return Ok(());
+    }
+    if filter.active_columns() == 1 {
+        println!("{}", values.first().map(String::as_str).unwrap_or("0"));
+        return Ok(());
+    }
+    print_wc_gnu_line(0, &values, "");
+    Ok(())
 }
 
 async fn resolve_read_file_paths(client: &Client, user_path: &str) -> Result<Vec<String>, BoxErr> {
@@ -885,7 +950,17 @@ pub(crate) async fn execute(
                 }
             }
         }
-        Command::Search { directory, query } => {
+        Command::Search {
+            directory,
+            query,
+            kind,
+            limit,
+            max_output_bytes,
+            sort,
+            modified_after,
+            modified_before,
+            json,
+        } => {
             let q = query.join(" ");
             if q.is_empty() {
                 return Err("search: empty query".into());
@@ -896,9 +971,42 @@ pub(crate) async fn execute(
                     Some(normalize_user_path(c).map_err(|e| -> BoxErr { e.to_string().into() })?)
                 }
             };
-            let hits = client
-                .search(&q, dir.as_deref().map(std::path::Path::new))
+            let report = client
+                .search_with_options(
+                    &q,
+                    dir.as_deref().map(std::path::Path::new),
+                    kind,
+                    limit,
+                    max_output_bytes,
+                    tabularium::SearchOptions {
+                        sort,
+                        modified_after,
+                        modified_before,
+                    },
+                )
                 .await?;
+            if !matches!(
+                report.semantic_status(),
+                "ready" | "disabled" | "not_requested" | "unsupported"
+            ) {
+                eprintln!(
+                    "search: semantic {} (use reindex --kind semantic / when needed)",
+                    report.semantic_status()
+                );
+            }
+            if report.lexical_status() == "unavailable" {
+                eprintln!("search: lexical unavailable; semantic results only");
+            }
+            if json {
+                println!("{}", serde_json::to_string(&report)?);
+                return Ok(ExecuteOutcome::Ok);
+            }
+            if report.truncated() {
+                eprintln!(
+                    "search: output truncated; narrow the query or increase limit/max-output-bytes"
+                );
+            }
+            let hits = report.into_hits();
             if use_ansi_stdout() {
                 let mut out = String::new();
                 for h in &hits {
@@ -1017,11 +1125,17 @@ pub(crate) async fn execute(
             return cmd_ec(client, &path, opts).await;
         }
         Command::Slice {
-            path, start, end, ..
+            path,
+            start,
+            end,
+            expected_revision,
+            ..
         } => {
             let path =
                 normalize_user_path(path.trim()).map_err(|e| -> BoxErr { e.to_string().into() })?;
-            let t = client.document_slice(&path, start, end).await?;
+            let t = client
+                .document_slice_checked(&path, start, end, expected_revision.as_deref())
+                .await?;
             if shell_pager_if_tall(ctx, &t)? {
                 return Ok(ExecuteOutcome::Ok);
             }
@@ -1257,70 +1371,69 @@ pub(crate) async fn execute(
             validate_entity_name(name.trim()).map_err(|e| -> BoxErr { e.to_string().into() })?;
             client.psk_destroy(name.trim()).await?;
         }
-        Command::Wc { path } => {
-            let paths = resolve_read_file_paths(client, path.trim()).await?;
-            let multi = paths.len() > 1;
-            if io::stdout().is_terminal() {
-                let mut table_rows: Vec<Vec<String>> = Vec::new();
-                let mut sum_b = 0u64;
-                let mut sum_l = 0usize;
-                let mut sum_w = 0usize;
-                let mut sum_c = 0usize;
-                for p in &paths {
-                    let w = client.document_wc(p).await?;
-                    sum_b += w.bytes();
-                    sum_l += w.lines();
-                    sum_w += w.words();
-                    sum_c += w.chars();
-                    if multi {
-                        table_rows.push(vec![
-                            p.clone(),
-                            w.bytes().to_string(),
-                            w.lines().to_string(),
-                            w.words().to_string(),
-                            w.chars().to_string(),
-                        ]);
-                    } else {
-                        table_rows.push(vec![
-                            w.bytes().to_string(),
-                            w.lines().to_string(),
-                            w.words().to_string(),
-                            w.chars().to_string(),
-                        ]);
+        Command::Wc {
+            path,
+            lines,
+            words,
+            bytes,
+            chars,
+            recursive,
+        } => {
+            let filter = WcMetricsFilter::from_cli_flags(lines, words, bytes, chars);
+            let resp = client.wc(path.trim(), filter, recursive).await?;
+            print_wc_output(&resp, filter)?;
+        }
+        Command::Meta {
+            path,
+            import,
+            export,
+            edit,
+        } => {
+            let path =
+                normalize_user_path(path.trim()).map_err(|e| -> BoxErr { e.to_string().into() })?;
+            let snapshot = client.get_document_metadata(&path).await?;
+            let original = snapshot
+                .get("metadata")
+                .ok_or("missing metadata in response")?;
+            let revision = snapshot.get("revision").and_then(serde_json::Value::as_str);
+            let pretty = serde_json::to_string_pretty(original)? + "\n";
+            if let Some(file) = import {
+                let value = read_metadata_file(&file)?;
+                client
+                    .set_document_metadata(&path, &value, revision)
+                    .await?;
+            } else if let Some(file) = export {
+                let mut out = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(file)?;
+                out.write_all(pretty.as_bytes())?;
+            } else if edit {
+                let mut tmp = tempfile::Builder::new()
+                    .prefix("tb-meta-")
+                    .suffix(".json")
+                    .tempfile()?;
+                tmp.write_all(pretty.as_bytes())?;
+                tmp.flush()?;
+                run_editor(tmp.path())?;
+                let result = async {
+                    let value = read_metadata_file(tmp.path())?;
+                    if &value != original {
+                        client
+                            .set_document_metadata(&path, &value, revision)
+                            .await?;
                     }
+                    Ok::<(), BoxErr>(())
                 }
-                if multi {
-                    table_rows.push(vec![
-                        "total".to_string(),
-                        sum_b.to_string(),
-                        sum_l.to_string(),
-                        sum_w.to_string(),
-                        sum_c.to_string(),
-                    ]);
-                    print_cli_table(
-                        true,
-                        &["path", "bytes", "lines", "words", "chars"],
-                        &table_rows,
+                .await;
+                if let Err(e) = result {
+                    let (_, kept) = tmp.keep()?;
+                    return Err(
+                        format!("{e}; edited metadata retained at {}", kept.display()).into(),
                     );
-                } else {
-                    print_cli_table(true, &["bytes", "lines", "words", "chars"], &table_rows);
                 }
             } else {
-                for p in &paths {
-                    let w = client.document_wc(p).await?;
-                    if multi {
-                        println!(
-                            "{}\t{}\t{}\t{}\t{}",
-                            p,
-                            w.bytes(),
-                            w.lines(),
-                            w.words(),
-                            w.chars()
-                        );
-                    } else {
-                        println!("{}\t{}\t{}\t{}", w.bytes(), w.lines(), w.words(), w.chars());
-                    }
-                }
+                print!("{pretty}");
             }
         }
         Command::Edit { path } => {
@@ -1381,7 +1494,7 @@ pub(crate) async fn execute(
         } => {
             cmd_cp(client, &src, &dst, recursive).await?;
         }
-        Command::Reindex { path } => {
+        Command::Reindex { path, kind } => {
             let path =
                 normalize_user_path(path.trim()).map_err(|e| -> BoxErr { e.to_string().into() })?;
             let rpc_path = if path == "/" {
@@ -1389,7 +1502,7 @@ pub(crate) async fn execute(
             } else {
                 Some(std::path::Path::new(path.as_str()))
             };
-            client.reindex(rpc_path).await?;
+            client.reindex_with_kind(rpc_path, kind).await?;
         }
     }
     Ok(ExecuteOutcome::Ok)
@@ -1512,18 +1625,6 @@ struct FindRow {
     label: String,
     modified_at: Timestamp,
     description: Option<String>,
-}
-
-fn path_has_glob_metachar(path: &str) -> bool {
-    path.chars().any(|c| matches!(c, '*' | '?' | '['))
-}
-
-fn compile_name_glob(pat: &str) -> Result<globset::GlobMatcher, BoxErr> {
-    Ok(GlobBuilder::new(pat)
-        .literal_separator(true)
-        .build()
-        .map_err(|e| -> BoxErr { format!("invalid glob pattern: {e}").into() })?
-        .compile_matcher())
 }
 
 async fn cmd_rm(client: &Client, path: &str, recursive: bool) -> Result<(), BoxErr> {
@@ -1920,6 +2021,45 @@ async fn ensure_directory_path_recursive(client: &Client, path: &str) -> Result<
     Ok(())
 }
 
+fn metadata_sidecar(path: &Path) -> std::path::PathBuf {
+    let mut name = path.as_os_str().to_os_string();
+    name.push(".metadata.json");
+    name.into()
+}
+
+fn read_metadata_file(path: &Path) -> Result<serde_json::Value, BoxErr> {
+    let bytes = std::fs::read(path)?;
+    let value: serde_json::Value = serde_json::from_slice(&bytes)?;
+    // Size is the canonical JSON payload, not whitespace added by export/$EDITOR.
+    if serde_json::to_vec(&value)?.len() > 65536 {
+        return Err("metadata exceeds 65536 UTF-8 bytes".into());
+    }
+    if !value.is_object() {
+        return Err("metadata must be a JSON object".into());
+    }
+    Ok(value)
+}
+
+async fn import_document_with_metadata(
+    client: &Client,
+    path: &str,
+    content: &str,
+    source: &Path,
+) -> Result<(), BoxErr> {
+    // Validate sidecar before creating the body, so invalid JSON creates no orphan document.
+    let sidecar = metadata_sidecar(source);
+    let metadata = if sidecar.exists() {
+        Some(read_metadata_file(&sidecar)?)
+    } else {
+        None
+    };
+    client.create_document(path, content).await?;
+    if let Some(metadata) = metadata {
+        client.set_document_metadata(path, &metadata, None).await?;
+    }
+    Ok(())
+}
+
 async fn import_fs_subtree(
     client: &Client,
     server_prefix: &str,
@@ -1949,6 +2089,11 @@ async fn import_fs_subtree(
             }
             any_error |= Box::pin(import_fs_subtree(client, &tb_sub, &path, &label)).await?;
         } else if path.is_file() {
+            if let Some(base) = fname.strip_suffix(".metadata.json")
+                && path.with_file_name(base).is_file()
+            {
+                continue;
+            }
             if let Err(reason) = validate_entity_name(&fname) {
                 println!("{label} - SKIPPED: {reason}");
                 continue;
@@ -1962,24 +2107,27 @@ async fn import_fs_subtree(
                 continue;
             }
             match std::fs::read_to_string(&path) {
-                Ok(content) => match client.create_document(&tb_path, &content).await {
-                    Ok(_) => {
-                        println!("{label} - OK");
-                        match fs_mtime_timestamp(&path) {
-                            Ok(ts) => {
-                                if let Err(e) = client.touch_document(&tb_path, Some(ts)).await {
-                                    println!("{label} - ERROR: set mtime: {e}");
-                                    any_error = true;
+                Ok(content) => {
+                    match import_document_with_metadata(client, &tb_path, &content, &path).await {
+                        Ok(_) => {
+                            println!("{label} - OK");
+                            match fs_mtime_timestamp(&path) {
+                                Ok(ts) => {
+                                    if let Err(e) = client.touch_document(&tb_path, Some(ts)).await
+                                    {
+                                        println!("{label} - ERROR: set mtime: {e}");
+                                        any_error = true;
+                                    }
                                 }
+                                Err(e) => println!("{label} - WARNING: {e}"),
                             }
-                            Err(e) => println!("{label} - WARNING: {e}"),
+                        }
+                        Err(e) => {
+                            println!("{label} - ERROR: {e}");
+                            any_error = true;
                         }
                     }
-                    Err(e) => {
-                        println!("{label} - ERROR: {e}");
-                        any_error = true;
-                    }
-                },
+                }
                 Err(e) => {
                     println!("{label} - ERROR: {e}");
                     any_error = true;
@@ -2041,7 +2189,7 @@ async fn cmd_import(
             .map_err(|e| -> BoxErr { format!("import: {e}").into() })?;
         if directory == "/" {
             let tb_path = join_abs_dir_entry("/", &fname);
-            client.create_document(&tb_path, &content).await?;
+            import_document_with_metadata(client, &tb_path, &content, dir).await?;
             if let Ok(ts) = fs_mtime_timestamp(dir) {
                 client.touch_document(&tb_path, Some(ts)).await?;
             }
@@ -2052,7 +2200,7 @@ async fn cmd_import(
             .map_err(|e| -> BoxErr { e.to_string().into() })?;
         ensure_directory_path_recursive(client, &base).await?;
         let tb_path = join_abs_dir_entry(&base, &fname);
-        client.create_document(&tb_path, &content).await?;
+        import_document_with_metadata(client, &tb_path, &content, dir).await?;
         if let Ok(ts) = fs_mtime_timestamp(dir) {
             client.touch_document(&tb_path, Some(ts)).await?;
         }
@@ -2104,13 +2252,25 @@ async fn cmd_import(
 
 async fn export_one_file(client: &Client, tb_path: &str, out_path: &Path) -> Result<bool, BoxErr> {
     let mut err = false;
-    if out_path.exists() {
+    let sidecar = metadata_sidecar(out_path);
+    if out_path.exists() || sidecar.exists() {
         println!("{} - ERROR: destination already exists", out_path.display());
         return Ok(true);
     }
+    let snapshot = client.get_document_metadata(tb_path).await?;
+    let metadata = snapshot
+        .get("metadata")
+        .ok_or("missing metadata in response")?;
     match client.get_document(tb_path).await {
         Ok(body) => match std::fs::write(out_path, body.content().as_bytes()) {
             Ok(()) => {
+                if metadata.as_object().is_some_and(|m| !m.is_empty()) {
+                    let mut file = std::fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(&sidecar)?;
+                    file.write_all((serde_json::to_string_pretty(metadata)? + "\n").as_bytes())?;
+                }
                 println!("{} - OK", out_path.display());
                 match server_entry_modified_at(client, tb_path).await {
                     Ok(ts) => {
@@ -2142,7 +2302,23 @@ async fn export_subtree(
 ) -> Result<bool, BoxErr> {
     std::fs::create_dir_all(dest_dir).map_err(|e| format!("export: {e}"))?;
     let mut any_error = false;
-    for e in client.list_directory(server_dir).await? {
+    let entries = client.list_directory(server_dir).await?;
+    // A real document cannot also occupy another document's sidecar name.
+    for entry in &entries {
+        if entry.is_file()
+            && let Some(base) = entry.name().strip_suffix(".metadata.json")
+            && entries
+                .iter()
+                .any(|other| other.is_file() && other.name() == base)
+        {
+            return Err(format!(
+                "export: reserved sidecar name collides with document: {server_dir}/{}",
+                entry.name()
+            )
+            .into());
+        }
+    }
+    for e in entries {
         let full = join_abs_dir_entry(server_dir, e.name());
         if e.is_directory() {
             if let Err(reason) = validate_fs_name(e.name()) {

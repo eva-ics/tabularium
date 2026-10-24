@@ -15,7 +15,7 @@ export interface LibraryKeyboardHandlers {
 }
 
 /**
- * Single keyboard rite for the library UI — no scattered `onKeyDown` in panes.
+ * Single keyboard handler for the library UI — no scattered `onKeyDown` in panes.
  */
 export function useLibraryKeyboard(
   enabled: boolean,

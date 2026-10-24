@@ -260,3 +260,57 @@ async fn rpc_exists_allows_directory_path_when_acl_is_subtree_glob_only() {
         assert_eq!(v["result"], false, "{path}: directory-only path");
     }
 }
+
+#[tokio::test]
+async fn bounded_search_omission_flags_do_not_count_denied_documents() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = Arc::new(
+        SqliteDatabase::init(
+            &format!("sqlite://{}", dir.path().join("bounded.db").display()),
+            &dir.path().join("bounded.idx"),
+            0,
+        )
+        .await
+        .unwrap(),
+    );
+    for path in ["/visible", "/hidden"] {
+        db.create_directory(path, None, false).await.unwrap();
+    }
+    for path in ["/visible/one", "/hidden/two", "/hidden/three"] {
+        db.create_document_at_path(path, "aclboundedneedle", false, None)
+            .await
+            .unwrap();
+    }
+    db.acl_upsert_validated("narrow", r#"{"admin":false,"allow":{"read":["/visible/*"],"write":[]},"deny":{"read":[],"write":[]}}"#).await.unwrap();
+    let key = "bounded-search-test-psk-abcdefghijklmnopqrst";
+    db.psk_insert("narrow", "narrow", key).await.unwrap();
+    let app = router(AppState {
+        db,
+        wait_timeout: Duration::from_secs(3),
+        process_started_at: Monotonic::now(),
+        authenticate_api: true,
+        authenticate_mcp: false,
+        oidc: None,
+    });
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let c = reqwest::Client::new();
+    for query in ["aclboundedneedle", "nomatchbounded"] {
+        let v: serde_json::Value = c.post(format!("http://{addr}/rpc")).header("X-Auth-Key", key)
+            .json(&json!({"jsonrpc":"2.0","id":1,"method":"search","params":{"query":query,"kind":"lexical","limit":1}}))
+            .send().await.unwrap().json().await.unwrap();
+        assert!(v.get("error").is_none(), "{v}");
+        assert_eq!(v["result"]["has_more"], false);
+        assert_eq!(v["result"]["truncated"], false);
+        let hits = v["result"]["hits"].as_array().unwrap();
+        assert_eq!(hits.len(), usize::from(query == "aclboundedneedle"));
+        if !hits.is_empty() {
+            assert_eq!(hits[0]["path"], "/visible/one");
+            assert!(hits[0]["revision"].is_string());
+        }
+    }
+    task.abort();
+}

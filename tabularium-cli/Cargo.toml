@@ -14,7 +14,6 @@ clap = { version = "4", features = ["derive"] }
 crossterm = { version = "0.28", features = ["bracketed-paste", "event-stream"] }
 filetime = "0.2"
 futures-util = "0.3"
-globset = "0.4"
 homedir = "0.3.6"
 ratatui = { version = "0.29", default-features = false, features = ["crossterm"] }
 regex = "1"

@@ -23,7 +23,7 @@ use tokio::runtime::Handle;
 
 use crate::execute::{
     ExecuteContext, ExecuteOutcome, ShellChildRpc, cmd_mcd, execute, execute_opts_from_command,
-    join_abs_dir_entry,
+    join_abs_dir_entry, print_cli_message,
 };
 use crate::shell_path::{
     resolve_ls_directory, resolve_shell_doc_path, resolve_shell_rm_path, resolve_shell_tree_scope,
@@ -165,9 +165,12 @@ fn flags_for(sub: &str) -> &'static [&'static str] {
         "chat" => &["-i", "--id", "--raw"],
         "cp" | "rm" => &["-r", "--recursive"],
         "export" => &["-d", "--destination"],
-        "find" | "search" => &["-d", "--directory"],
+        "find" => &["-d", "--directory"],
+        "search" => &["-d", "--directory", "--kind"],
+        "reindex" => &["--kind"],
         "grep" => &["-m", "-v", "--invert-match"],
         "head" => &["-n", "--raw"],
+        "wc" => &["-l", "-w", "-c", "-m", "-r", "--recursive"],
         "import" => &["-n", "--name"],
         "l" | "ll" | "ls" => &["-t", "--time", "-r", "--reverse"],
         "lt" => &["-r", "--reverse"],
@@ -1121,6 +1124,27 @@ impl Completer for TbHelper {
             }
         }
 
+        if matches!(sub, "search" | "reindex") {
+            let kind_partial = if ends_with_space && words.last().copied() == Some("--kind") {
+                Some("")
+            } else if !ends_with_space && words.len() >= 3 && words[words.len() - 2] == "--kind" {
+                Some(words[words.len() - 1])
+            } else {
+                None
+            };
+            if let Some(prefix) = kind_partial {
+                let pairs = ["lexical", "semantic", "hybrid"]
+                    .into_iter()
+                    .filter(|k| k.starts_with(prefix))
+                    .map(|k| Pair {
+                        display: k.into(),
+                        replacement: format!("{k} "),
+                    })
+                    .collect();
+                return Ok((if ends_with_space { pos } else { start }, pairs));
+            }
+        }
+
         if sub == "grep"
             && let Some(r) =
                 self.complete_grep(&mut state, &words, ends_with_space, partial, start, pos)
@@ -1414,11 +1438,13 @@ pub(crate) fn apply_shell_cwd(cmd: Command, shell_cwd: Option<&str>) -> Result<C
             start,
             end,
             raw,
+            expected_revision,
         } => Command::Slice {
             path: resolve_shell_doc_path(&path, shell_cwd)?,
             start,
             end,
             raw,
+            expected_revision,
         },
         Command::Grep {
             pattern,
@@ -1434,8 +1460,31 @@ pub(crate) fn apply_shell_cwd(cmd: Command, shell_cwd: Option<&str>) -> Result<C
         Command::Stat { path } => Command::Stat {
             path: resolve_shell_doc_path(&path, shell_cwd)?,
         },
-        Command::Wc { path } => Command::Wc {
+        Command::Wc {
+            path,
+            lines,
+            words,
+            bytes,
+            chars,
+            recursive,
+        } => Command::Wc {
             path: resolve_shell_doc_path(&path, shell_cwd)?,
+            lines,
+            words,
+            bytes,
+            chars,
+            recursive,
+        },
+        Command::Meta {
+            path,
+            import,
+            export,
+            edit,
+        } => Command::Meta {
+            path: resolve_shell_doc_path(&path, shell_cwd)?,
+            import,
+            export,
+            edit,
         },
         Command::Edit { path } => Command::Edit {
             path: resolve_shell_doc_path(&path, shell_cwd)?,
@@ -1456,7 +1505,24 @@ pub(crate) fn apply_shell_cwd(cmd: Command, shell_cwd: Option<&str>) -> Result<C
             src: resolve_shell_tree_scope(&src, shell_cwd)?,
             dst: resolve_shell_tree_scope(&dst, shell_cwd)?,
         },
-        Command::Search { directory, query } => Command::Search {
+        Command::Search {
+            directory,
+            query,
+            kind,
+            limit,
+            max_output_bytes,
+            sort,
+            modified_after,
+            modified_before,
+            json,
+        } => Command::Search {
+            json,
+            limit,
+            max_output_bytes,
+            sort,
+            modified_after,
+            modified_before,
+            kind,
             directory: match directory {
                 None => None,
                 Some(c) => Some(resolve_shell_tree_scope(&c, shell_cwd)?),
@@ -1502,7 +1568,8 @@ pub(crate) fn apply_shell_cwd(cmd: Command, shell_cwd: Option<&str>) -> Result<C
             path: resolve_shell_doc_path(&path, shell_cwd)?,
             time,
         },
-        Command::Reindex { path } => Command::Reindex {
+        Command::Reindex { path, kind } => Command::Reindex {
+            kind,
             path: resolve_shell_tree_scope(&path, shell_cwd)?,
         },
         Command::Whoami => Command::Whoami,
@@ -1863,7 +1930,7 @@ fn run_shell_blocking(
                     "help" | "h" | "?" => {
                         push_history(&mut rl, &history_path, trimmed)?;
                         if let Err(e) = print_shell_help() {
-                            eprintln!("{e}");
+                            print_cli_message(&e.to_string());
                         }
                         continue;
                     }
@@ -1881,7 +1948,7 @@ fn run_shell_blocking(
                             push_history(&mut rl, &history_path, trimmed)?;
                         }
                         Err(e) => {
-                            eprintln!("{e}");
+                            print_cli_message(&e.to_string());
                             push_history(&mut rl, &history_path, trimmed)?;
                         }
                     }
@@ -1894,7 +1961,7 @@ fn run_shell_blocking(
                             push_history(&mut rl, &history_path, trimmed)?;
                         }
                         Err(e) => {
-                            eprintln!("{e}");
+                            print_cli_message(&e.to_string());
                             push_history(&mut rl, &history_path, trimmed)?;
                         }
                     }
@@ -1913,7 +1980,7 @@ fn run_shell_blocking(
                                 push_history(&mut rl, &history_path, trimmed)?;
                             }
                             Err(e) => {
-                                eprintln!("{e}");
+                                print_cli_message(&e.to_string());
                                 push_history(&mut rl, &history_path, trimmed)?;
                             }
                         }
@@ -1929,7 +1996,7 @@ fn run_shell_blocking(
                         continue;
                     }
                     if let Err(e) = exec_shell_line(script) {
-                        eprintln!("{e}");
+                        print_cli_message(&e.to_string());
                     }
                     push_history(&mut rl, &history_path, trimmed)?;
                     continue;
@@ -1946,7 +2013,7 @@ fn run_shell_blocking(
                 ) {
                     Ok(p) => p,
                     Err(e) => {
-                        eprintln!("{e}");
+                        print_cli_message(&e.to_string());
                         push_history(&mut rl, &history_path, trimmed)?;
                         continue;
                     }
@@ -1959,7 +2026,7 @@ fn run_shell_blocking(
                     match apply_shell_cwd(parsed.command, g.cwd.as_deref()) {
                         Ok(c) => c,
                         Err(e) => {
-                            eprintln!("{e}");
+                            print_cli_message(&e.to_string());
                             push_history(&mut rl, &history_path, trimmed)?;
                             continue;
                         }
@@ -1988,7 +2055,7 @@ fn run_shell_blocking(
                                 g.invalidate_all();
                             }
                         }
-                        Err(e) => eprintln!("{e}"),
+                        Err(e) => print_cli_message(&e.to_string()),
                     }
                     rl = build_editor(
                         Arc::clone(&client),
@@ -2020,7 +2087,7 @@ fn run_shell_blocking(
                         push_history(&mut rl, &history_path, trimmed)?;
                     }
                     Err(e) => {
-                        eprintln!("{e}");
+                        print_cli_message(&e.to_string());
                         push_history(&mut rl, &history_path, trimmed)?;
                     }
                 }
@@ -2329,6 +2396,7 @@ mod shell_cwd_tests {
             ),
             (
                 Command::Slice {
+                    expected_revision: None,
                     path: "d".into(),
                     start: 1,
                     end: 2,
@@ -2337,7 +2405,17 @@ mod shell_cwd_tests {
                 "c/d",
             ),
             (Command::Stat { path: "d".into() }, "c/d"),
-            (Command::Wc { path: "d".into() }, "c/d"),
+            (
+                Command::Wc {
+                    path: "d".into(),
+                    lines: false,
+                    words: false,
+                    bytes: false,
+                    chars: false,
+                    recursive: false,
+                },
+                "c/d",
+            ),
             (Command::Ec { path: "d".into() }, "c/d"),
             (Command::Edit { path: "d".into() }, "c/d"),
             (Command::Wait { path: "d".into() }, "c/d"),
@@ -2358,7 +2436,7 @@ mod shell_cwd_tests {
             | Command::Chat { path: p, .. }
             | Command::Slice { path: p, .. }
             | Command::Stat { path: p }
-            | Command::Wc { path: p }
+            | Command::Wc { path: p, .. }
             | Command::Ec { path: p }
             | Command::Edit { path: p }
             | Command::Wait { path: p }
@@ -2393,23 +2471,43 @@ mod shell_cwd_tests {
 
     #[test]
     fn reindex_preserves_slash_sentinel_strips_directory_segment() {
-        let r = unwrap_ac(Command::Reindex { path: "/".into() }, Some("c"));
-        assert!(matches!(r, Command::Reindex { path } if path == "/"));
+        let r = unwrap_ac(
+            Command::Reindex {
+                kind: Default::default(),
+                path: "/".into(),
+            },
+            Some("c"),
+        );
+        assert!(matches!(r, Command::Reindex { path, .. } if path == "/"));
         let r2 = unwrap_ac(
             Command::Reindex {
+                kind: Default::default(),
                 path: "/work".into(),
             },
             Some("c"),
         );
-        assert!(matches!(r2, Command::Reindex { path } if path == "work"));
-        let r_dot = unwrap_ac(Command::Reindex { path: ".".into() }, Some("c"));
-        assert!(matches!(r_dot, Command::Reindex { path } if path == "c"));
+        assert!(matches!(r2, Command::Reindex { path, .. } if path == "work"));
+        let r_dot = unwrap_ac(
+            Command::Reindex {
+                kind: Default::default(),
+                path: ".".into(),
+            },
+            Some("c"),
+        );
+        assert!(matches!(r_dot, Command::Reindex { path, .. } if path == "c"));
     }
 
     #[test]
     fn search_directory_optional_strips_leading_slash() {
         let s = unwrap_ac(
             Command::Search {
+                json: false,
+                limit: None,
+                max_output_bytes: None,
+                sort: Default::default(),
+                modified_after: None,
+                modified_before: None,
+                kind: Default::default(),
                 directory: None,
                 query: vec!["q".into()],
             },
@@ -2418,12 +2516,20 @@ mod shell_cwd_tests {
         assert!(matches!(
             s,
             Command::Search {
+                kind: _,
                 directory: None,
                 ..
             }
         ));
         let s2 = unwrap_ac(
             Command::Search {
+                json: false,
+                limit: None,
+                max_output_bytes: None,
+                sort: Default::default(),
+                modified_after: None,
+                modified_before: None,
+                kind: Default::default(),
                 directory: Some("/notes".into()),
                 query: vec!["q".into()],
             },
@@ -2432,6 +2538,13 @@ mod shell_cwd_tests {
         assert!(matches!(s2, Command::Search { directory: Some(ref x), .. } if x == "notes"));
         let s3 = unwrap_ac(
             Command::Search {
+                json: false,
+                limit: None,
+                max_output_bytes: None,
+                sort: Default::default(),
+                modified_after: None,
+                modified_before: None,
+                kind: Default::default(),
                 directory: Some("/".into()),
                 query: vec!["q".into()],
             },
@@ -2444,6 +2557,13 @@ mod shell_cwd_tests {
     fn search_dot_directory_resolves_cwd() {
         let s = unwrap_ac(
             Command::Search {
+                json: false,
+                limit: None,
+                max_output_bytes: None,
+                sort: Default::default(),
+                modified_after: None,
+                modified_before: None,
+                kind: Default::default(),
                 directory: Some(".".into()),
                 query: vec!["q".into()],
             },
@@ -2687,6 +2807,7 @@ mod shell_cwd_tests {
             ),
             (
                 Command::Slice {
+                    expected_revision: None,
                     path: "/c/d".into(),
                     start: 1,
                     end: 2,
@@ -2703,6 +2824,11 @@ mod shell_cwd_tests {
             (
                 Command::Wc {
                     path: "/c/d".into(),
+                    lines: false,
+                    words: false,
+                    bytes: false,
+                    chars: false,
+                    recursive: false,
                 },
                 "c/d",
             ),
@@ -2738,7 +2864,7 @@ mod shell_cwd_tests {
             | Command::Chat { path: p, .. }
             | Command::Slice { path: p, .. }
             | Command::Stat { path: p }
-            | Command::Wc { path: p }
+            | Command::Wc { path: p, .. }
             | Command::Ec { path: p }
             | Command::Edit { path: p }
             | Command::Wait { path: p }
@@ -2748,6 +2874,49 @@ mod shell_cwd_tests {
             };
             assert_eq!(p, expect);
         }
+    }
+
+    #[test]
+    fn wc_parses_metric_flags() {
+        use crate::ShellCommandOnly;
+        use clap::Parser;
+        let c = ShellCommandOnly::parse_from(["tb", "wc", "-l", "-w", "/docs/*"]);
+        let Command::Wc {
+            path,
+            lines,
+            words,
+            bytes,
+            chars,
+            recursive,
+        } = c.command
+        else {
+            panic!("expected wc");
+        };
+        assert_eq!(path, "/docs/*");
+        assert!(lines);
+        assert!(words);
+        assert!(!bytes);
+        assert!(!chars);
+        assert!(!recursive);
+    }
+
+    #[test]
+    fn wc_parses_recursive_flag() {
+        use crate::ShellCommandOnly;
+        use clap::Parser;
+        let c = ShellCommandOnly::parse_from(["tb", "wc", "-l", "-r", "projects/bms/*"]);
+        let Command::Wc {
+            path,
+            lines,
+            recursive,
+            ..
+        } = c.command
+        else {
+            panic!("expected wc");
+        };
+        assert_eq!(path, "projects/bms/*");
+        assert!(lines);
+        assert!(recursive);
     }
 
     #[test]

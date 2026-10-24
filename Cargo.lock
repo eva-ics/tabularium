@@ -3482,15 +3482,17 @@ dependencies = [
 
 [[package]]
 name = "tabularium"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "async-trait",
+ "axum",
  "bma-ts",
  "chrono",
  "dashmap",
  "dateparser",
  "fs-err",
  "futures-util",
+ "globset",
  "moka",
  "regex",
  "reqwest",
@@ -3508,7 +3510,7 @@ dependencies = [
 
 [[package]]
 name = "tabularium-cli"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "axum",
  "bma-ts",
@@ -3516,7 +3518,6 @@ dependencies = [
  "crossterm 0.28.1",
  "filetime",
  "futures-util",
- "globset",
  "homedir",
  "libc",
  "ratatui",
@@ -3535,7 +3536,7 @@ dependencies = [
 
 [[package]]
 name = "tabularium-server"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "axum",
  "base64",

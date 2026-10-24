@@ -26,7 +26,10 @@ use tabularium::resource_path::{
     canonical_path_segments, join_under_directory, normalize_path_for_rpc,
 };
 use tabularium::validate_entity_name;
-use tabularium::{DocumentWaitStatus, EntryId, EntryKind, Error, SqliteDatabase, TailMode};
+use tabularium::{
+    DocumentWaitStatus, EntryId, EntryKind, Error, SearchKind, SearchReport, SqliteDatabase,
+    TailMode,
+};
 
 const SEARCH_LIMIT: usize = 256;
 
@@ -110,7 +113,12 @@ pub fn router(state: AppState) -> Router {
                 .patch(rest_patch_document)
                 .delete(rest_delete_any),
         )
+        .route(
+            "/api/metadata/{*rest}",
+            get(rest_get_metadata).put(rest_put_metadata),
+        )
         .route("/api/search", get(search_get).post(search_post))
+        .route("/api/reindex", post(rest_reindex))
         .route("/ws", get(ws_upgrade))
         .route("/rpc", post(rpc_dispatch))
         .layer(DefaultBodyLimit::max(32 * 1024 * 1024))
@@ -206,6 +214,20 @@ struct SearchQuery {
     q: String,
     #[serde(default)]
     dir: Option<String>,
+    #[serde(default)]
+    kind: SearchKind,
+    #[serde(default)]
+    with_status: bool,
+    #[serde(default)]
+    limit: Option<usize>,
+    #[serde(default)]
+    max_output_bytes: Option<usize>,
+    #[serde(default)]
+    sort: tabularium::SearchSort,
+    #[serde(default)]
+    modified_after: Option<u64>,
+    #[serde(default)]
+    modified_before: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -214,6 +236,20 @@ struct SearchPostBody {
     q: String,
     #[serde(default)]
     dir: Option<String>,
+    #[serde(default)]
+    kind: SearchKind,
+    #[serde(default)]
+    with_status: bool,
+    #[serde(default)]
+    limit: Option<usize>,
+    #[serde(default)]
+    max_output_bytes: Option<usize>,
+    #[serde(default)]
+    sort: tabularium::SearchSort,
+    #[serde(default)]
+    modified_after: Option<u64>,
+    #[serde(default)]
+    modified_before: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -380,6 +416,45 @@ async fn rest_mkdir(
     ))
 }
 
+async fn rest_get_metadata(
+    State(st): State<AppState>,
+    Path(rest): Path<String>,
+    headers: HeaderMap,
+) -> ApiResult<Response> {
+    let auth = api_resolve_auth(&st, &headers).await?;
+    let path = rest_to_canonical(&rest);
+    check_read(&auth, &path).map_err(ApiError)?;
+    let meta = st.db.document_ref_by_path(&path).await?;
+    let value = st.db.document_metadata(&path).await?;
+    Ok(Json(json!({"metadata":value, "revision":meta.revision()})).into_response())
+}
+
+#[derive(Deserialize)]
+struct MetadataWrite {
+    metadata: Value,
+    #[serde(default)]
+    only_if_revision: Option<String>,
+}
+
+async fn rest_put_metadata(
+    State(st): State<AppState>,
+    Path(rest): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<MetadataWrite>,
+) -> ApiResult<Response> {
+    let auth = api_resolve_auth(&st, &headers).await?;
+    let path = rest_to_canonical(&rest);
+    check_write(&auth, &path).map_err(ApiError)?;
+    if let Some(rev) = &body.only_if_revision {
+        uuid::Uuid::parse_str(rev).map_err(|e| ApiError(Error::InvalidInput(e.to_string())))?;
+    }
+    st.db
+        .set_document_metadata(&path, &body.metadata, body.only_if_revision.as_deref())
+        .await?;
+    let meta = st.db.document_ref_by_path(&path).await?;
+    Ok(Json(json!({"revision":meta.revision()})).into_response())
+}
+
 async fn get_or_list(
     State(st): State<AppState>,
     Path(rest): Path<String>,
@@ -406,11 +481,13 @@ async fn get_or_list(
                 "id": meta.id().raw(),
                 "path": meta.canonical_path(),
                 "content": body,
+                "metadata": st.db.document_metadata(meta.canonical_path()).await?,
                 "created_at": meta.created_at(),
                 "modified_at": meta.modified_at(),
                 "accessed_at": meta.accessed_at(),
                 "revision": meta.revision(),
                 "size_bytes": meta.size_bytes(),
+                "mime_type": meta.mime_type(),
             }))
             .into_response())
         }
@@ -542,70 +619,163 @@ async fn rest_delete_any(
     Ok(StatusCode::NO_CONTENT)
 }
 
+fn search_auth_context(auth: &RequestAuth) -> Option<&tabularium::AuthContext> {
+    match auth {
+        RequestAuth::Disabled => None,
+        RequestAuth::Authenticated(ctx) => Some(ctx),
+    }
+}
+
+/// Budget counts compact UTF-8 JSON for the search payload, not transport/RPC framing.
+fn search_bounds(limit: Option<usize>, bytes: Option<usize>) -> tabularium::Result<(usize, usize)> {
+    let limit = limit.unwrap_or(SEARCH_LIMIT);
+    let bytes = bytes.unwrap_or(65_536);
+    if !(1..=SEARCH_LIMIT).contains(&limit) || !(512..=1_048_576).contains(&bytes) {
+        return Err(Error::InvalidInput(
+            "limit must be 1..256; max_output_bytes must be 512..1048576".into(),
+        ));
+    }
+    Ok((limit, bytes))
+}
+fn search_wire(report: &SearchReport, with_status: bool, budget: usize) -> (Value, bool) {
+    let envelope = |hits: Vec<Value>, truncated: bool| {
+        if with_status {
+            json!({"hits": hits, "lexical_status":report.lexical_status(),"semantic_status":report.semantic_status(),
+                "has_more":truncated,"truncated":truncated})
+        } else {
+            Value::Array(hits)
+        }
+    };
+    let overhead = serde_json::to_vec(&envelope(Vec::new(), false))
+        .expect("JSON value")
+        .len();
+    let mut used = overhead;
+    let mut hits = Vec::new();
+    let mut truncated = report.has_more();
+    for h in report.hits() {
+        let hit = json!({"document_id":h.document_id().raw(),"path":h.path(),"snippet":h.snippet(),
+            "score":h.score(),"line_number":h.line_number(),"start_line":h.start_line(),"end_line":h.line_end(),"line_end":h.line_end(),
+            "revision":h.revision(),"modified_at":h.modified_at()});
+        let size =
+            serde_json::to_vec(&hit).expect("JSON value").len() + usize::from(!hits.is_empty());
+        if used + size > budget {
+            truncated = true;
+            break;
+        }
+        used += size;
+        hits.push(hit);
+    }
+    (envelope(hits, truncated), truncated)
+}
+fn optional_search_usize(m: &Map<String, Value>, key: &str) -> tabularium::Result<Option<usize>> {
+    m.get(key)
+        .map(|v| {
+            v.as_u64()
+                .and_then(|n| usize::try_from(n).ok())
+                .ok_or_else(|| Error::InvalidInput(format!("{key} must be a nonnegative integer")))
+        })
+        .transpose()
+}
+
 async fn search_get(
     State(st): State<AppState>,
     Query(q): Query<SearchQuery>,
     headers: HeaderMap,
-) -> ApiResult<Json<Value>> {
+) -> ApiResult<Response> {
     let auth = api_resolve_auth(&st, &headers).await?;
-    let dir = q.dir.as_deref();
-    search_inner(&st, &auth, &q.q, dir).await
+    search_inner(
+        &st,
+        &auth,
+        &q.q,
+        q.dir.as_deref(),
+        q.kind,
+        q.with_status || q.limit.is_some() || q.max_output_bytes.is_some(),
+        q.limit,
+        q.max_output_bytes,
+        tabularium::SearchOptions {
+            sort: q.sort,
+            modified_after: q.modified_after,
+            modified_before: q.modified_before,
+        },
+    )
+    .await
 }
 
 async fn search_post(
     State(st): State<AppState>,
     headers: HeaderMap,
     body: Bytes,
-) -> ApiResult<Json<Value>> {
+) -> ApiResult<Response> {
     let auth = api_resolve_auth(&st, &headers).await?;
     let ct = headers
         .get(header::CONTENT_TYPE)
         .and_then(|h| h.to_str().ok())
         .unwrap_or("");
-    let (q, dir_owned): (String, Option<String>) = if is_multipart_form(ct) {
+    let b: SearchPostBody = if is_multipart_form(ct) {
         let boundary =
             multer::parse_boundary(ct).map_err(|e| ApiError(Error::InvalidInput(e.to_string())))?;
-        let mut fields = crate::multipart_body::form_fields(body, boundary)
+        let fields = crate::multipart_body::form_fields(body, boundary)
             .await
             .map_err(ApiError)?;
-        let q = fields
-            .remove("q")
-            .ok_or_else(|| ApiError(Error::InvalidInput("multipart field q required".into())))?;
-        let dir = fields.remove("dir");
-        (q, dir)
-    } else if is_www_form_urlencoded(ct) {
-        let b: SearchPostBody = serde_urlencoded::from_bytes(&body)
-            .map_err(|e| ApiError(Error::InvalidInput(e.to_string())))?;
-        (b.q, b.dir)
-    } else {
-        let b: SearchPostBody = serde_json::from_slice(&body)
-            .map_err(|e| ApiError(Error::InvalidInput(e.to_string())))?;
-        (b.q, b.dir)
-    };
-    let dir = dir_owned.as_deref();
-    search_inner(&st, &auth, &q, dir).await
-}
-
-fn filter_search_hits(
-    auth: &RequestAuth,
-    hits: Vec<tabularium::SearchHit>,
-) -> Vec<tabularium::SearchHit> {
-    match auth {
-        RequestAuth::Disabled => hits,
-        RequestAuth::Authenticated(ctx) if ctx.admin() => hits,
-        RequestAuth::Authenticated(ctx) => hits
+        let values: Map<String, Value> = fields
             .into_iter()
-            .filter(|h| ctx.check_read_abs(h.path()).is_ok())
-            .collect(),
-    }
+            .map(|(k, v)| {
+                let value = if matches!(
+                    k.as_str(),
+                    "limit" | "max_output_bytes" | "modified_after" | "modified_before"
+                ) {
+                    v.parse::<u64>().map_or(Value::String(v), |n| json!(n))
+                } else if k == "with_status" {
+                    match v.as_str() {
+                        "true" => Value::Bool(true),
+                        "false" => Value::Bool(false),
+                        _ => Value::String(v),
+                    }
+                } else {
+                    Value::String(v)
+                };
+                (k, value)
+            })
+            .collect();
+        serde_json::from_value(Value::Object(values))
+            .map_err(|e| ApiError(Error::InvalidInput(e.to_string())))?
+    } else if is_www_form_urlencoded(ct) {
+        serde_urlencoded::from_bytes(&body)
+            .map_err(|e| ApiError(Error::InvalidInput(e.to_string())))?
+    } else {
+        serde_json::from_slice(&body).map_err(|e| ApiError(Error::InvalidInput(e.to_string())))?
+    };
+    search_inner(
+        &st,
+        &auth,
+        &b.q,
+        b.dir.as_deref(),
+        b.kind,
+        b.with_status || b.limit.is_some() || b.max_output_bytes.is_some(),
+        b.limit,
+        b.max_output_bytes,
+        tabularium::SearchOptions {
+            sort: b.sort,
+            modified_after: b.modified_after,
+            modified_before: b.modified_before,
+        },
+    )
+    .await
 }
 
+#[allow(clippy::too_many_arguments)] // Shared legacy transport arguments plus additive options.
 async fn search_inner(
     st: &AppState,
     auth: &RequestAuth,
     q: &str,
     dir_prefix: Option<&str>,
-) -> ApiResult<Json<Value>> {
+    kind: SearchKind,
+    with_status: bool,
+    limit: Option<usize>,
+    max_output_bytes: Option<usize>,
+    options: tabularium::SearchOptions,
+) -> ApiResult<Response> {
+    let (limit, budget) = search_bounds(limit, max_output_bytes).map_err(ApiError)?;
     let scope = if let Some(d) = dir_prefix {
         let n = normalize_path_for_rpc(d).map_err(ApiError)?;
         canonical_path_segments(&n).map_err(ApiError)?;
@@ -616,22 +786,62 @@ async fn search_inner(
         SearchScopeReady::Global
     };
     scope.authorize(auth).map_err(ApiError)?;
-    let (dp, restrict_doc) = scope.directory_prefix_and_restrict();
-    let hits = st.db.search_hits(q, dp, SEARCH_LIMIT, restrict_doc).await?;
-    let hits = filter_search_hits(auth, hits);
-    let v: Vec<Value> = hits
-        .into_iter()
-        .map(|h| {
-            json!({
-                "document_id": h.document_id().raw(),
-                "path": h.path(),
-                "snippet": h.snippet(),
-                "score": h.score(),
-                "line_number": h.line_number(),
-            })
-        })
-        .collect();
-    Ok(Json(Value::Array(v)))
+    let (dp, only) = scope.directory_prefix_and_restrict();
+    let report = st
+        .db
+        .search_report_with_options(q, dp, limit, only, kind, search_auth_context(auth), options)
+        .await?;
+    let (payload, truncated) = search_wire(&report, with_status, budget);
+    let mut response = Json(payload).into_response();
+    response.headers_mut().insert(
+        "x-tabularium-search-truncated",
+        HeaderValue::from_static(if truncated { "true" } else { "false" }),
+    );
+    response.headers_mut().insert(
+        "x-tabularium-lexical-status",
+        HeaderValue::from_str(report.lexical_status()).expect("static status"),
+    );
+    response.headers_mut().insert(
+        "x-tabularium-semantic-status",
+        HeaderValue::from_str(report.semantic_status()).expect("static status"),
+    );
+    Ok(response)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReindexBody {
+    #[serde(default)]
+    path: Option<String>,
+    #[serde(default)]
+    kind: SearchKind,
+}
+
+async fn rest_reindex(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Json(b): Json<ReindexBody>,
+) -> ApiResult<Json<Value>> {
+    let auth = api_resolve_auth(&st, &headers).await?;
+    require_mgmt_admin(&auth)?;
+    let path = b
+        .path
+        .as_deref()
+        .filter(|p| !p.is_empty() && *p != "/")
+        .map(normalize_path_for_rpc)
+        .transpose()?;
+    st.db.reindex_kind(path.as_deref(), b.kind).await?;
+    Ok(Json(Value::Null))
+}
+
+fn rpc_search_kind(m: &Map<String, Value>) -> tabularium::Result<SearchKind> {
+    match m.get("kind") {
+        None => Ok(SearchKind::default()),
+        Some(Value::String(s)) => s.parse(),
+        Some(_) => Err(Error::InvalidInput(
+            "kind must be lexical, semantic, or hybrid".into(),
+        )),
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -665,7 +875,7 @@ async fn rpc_dispatch(State(st): State<AppState>, headers: HeaderMap, body: Byte
     let auth_result: Result<RequestAuth, Error> = if !st.authenticate_api {
         Ok(RequestAuth::Disabled)
     } else if req.method == "test" {
-        // Uptime rite stays callable so the machine-spirits can probe the Throne without a key.
+        // The uptime endpoint remains callable without authentication for health checks.
         Ok(RequestAuth::Disabled)
     } else {
         resolve_request_auth_arc(st.db.as_ref(), true, &headers, st.oidc.as_ref()).await
@@ -1155,6 +1365,26 @@ pub(crate) async fn dispatch_app_rpc(
             st.db.cp(&src, &dst, recursive).await?;
             Ok(Value::Null)
         }
+        "get_document_metadata" => {
+            let path = rpc_path(&m, "path")?;
+            check_read(auth, &path).map_err(RpcAppError::Other)?;
+            let meta = st.db.document_ref_by_path(&path).await?;
+            let metadata = st.db.document_metadata(&path).await?;
+            Ok(json!({ "metadata": metadata, "revision": meta.revision() }))
+        }
+        "set_document_metadata" => {
+            let path = rpc_path(&m, "path")?;
+            check_write(auth, &path).map_err(RpcAppError::Other)?;
+            let value = m.get("metadata").ok_or_else(|| {
+                RpcAppError::Other(Error::InvalidInput("missing metadata".into()))
+            })?;
+            let only = get_optional_uuid_str(&m, "only_if_revision")?;
+            st.db
+                .set_document_metadata(&path, value, only.as_deref())
+                .await?;
+            let meta = st.db.document_ref_by_path(&path).await?;
+            Ok(json!({ "revision": meta.revision() }))
+        }
         "get_document" | "cat" => {
             let path = rpc_path(&m, "path")?;
             check_read(auth, &path).map_err(RpcAppError::Other)?;
@@ -1164,11 +1394,13 @@ pub(crate) async fn dispatch_app_rpc(
                 "id": meta.id().raw(),
                 "path": meta.canonical_path(),
                 "content": body,
+                "metadata": st.db.document_metadata(meta.canonical_path()).await?,
                 "created_at": meta.created_at(),
                 "modified_at": meta.modified_at(),
                 "accessed_at": meta.accessed_at(),
                 "revision": meta.revision(),
                 "size_bytes": meta.size_bytes(),
+                "mime_type": meta.mime_type(),
             }))
         }
         "wait" => {
@@ -1199,6 +1431,7 @@ pub(crate) async fn dispatch_app_rpc(
                 "accessed_at": meta.accessed_at(),
                 "revision": meta.revision(),
                 "size_bytes": meta.size_bytes(),
+                "mime_type": meta.mime_type(),
             }))
         }
         "exists" => {
@@ -1222,21 +1455,36 @@ pub(crate) async fn dispatch_app_rpc(
             };
             scope.authorize(auth).map_err(RpcAppError::Other)?;
             let (dp, restrict_doc) = scope.directory_prefix_and_restrict();
-            let hits = st.db.search_hits(q, dp, SEARCH_LIMIT, restrict_doc).await?;
-            let hits = filter_search_hits(auth, hits);
-            let v: Vec<Value> = hits
-                .into_iter()
-                .map(|h| {
-                    json!({
-                        "document_id": h.document_id().raw(),
-                        "path": h.path(),
-                        "snippet": h.snippet(),
-                        "score": h.score(),
-                        "line_number": h.line_number(),
-                    })
-                })
-                .collect();
-            Ok(Value::Array(v))
+            let kind = rpc_search_kind(&m)?;
+            let with_status = match m.get("with_status") {
+                None => false,
+                Some(Value::Bool(b)) => *b,
+                Some(_) => {
+                    return Err(Error::InvalidInput("with_status must be boolean".into()).into());
+                }
+            };
+            let (limit, budget) = search_bounds(
+                optional_search_usize(&m, "limit")?,
+                optional_search_usize(&m, "max_output_bytes")?,
+            )?;
+            let with_status =
+                with_status || m.contains_key("limit") || m.contains_key("max_output_bytes");
+            let options: tabularium::SearchOptions =
+                serde_json::from_value(Value::Object(m.clone()))
+                    .map_err(|e| Error::InvalidInput(e.to_string()))?;
+            let report = st
+                .db
+                .search_report_with_options(
+                    q,
+                    dp,
+                    limit,
+                    restrict_doc,
+                    kind,
+                    search_auth_context(auth),
+                    options,
+                )
+                .await?;
+            Ok(search_wire(&report, with_status, budget).0)
         }
         "reindex" => {
             require_mgmt_admin(auth).map_err(RpcAppError::Other)?;
@@ -1256,7 +1504,9 @@ pub(crate) async fn dispatch_app_rpc(
                     }
                 }
             };
-            st.db.reindex(filter.as_deref()).await?;
+            st.db
+                .reindex_kind(filter.as_deref(), rpc_search_kind(&m)?)
+                .await?;
             Ok(Value::Null)
         }
         "head" => {
@@ -1281,8 +1531,12 @@ pub(crate) async fn dispatch_app_rpc(
             let end = get_slice_line(&m, "end_line", "to_line")?;
             check_read(auth, &path).map_err(RpcAppError::Other)?;
             let fid = st.db.resolve_existing_file_path(&path).await?;
-            let text = st.db.document_slice(fid, start, end).await?;
-            Ok(json!({ "text": text }))
+            let expected = get_optional_uuid_str(&m, "expected_revision")?;
+            let (text, revision) = st
+                .db
+                .document_slice_versioned(fid, start, end, expected.as_deref())
+                .await?;
+            Ok(json!({ "text": text, "revision": revision }))
         }
         "grep" => {
             let path = rpc_path(&m, "path")?;
@@ -1309,15 +1563,37 @@ pub(crate) async fn dispatch_app_rpc(
         }
         "wc" => {
             let path = rpc_path(&m, "path")?;
-            check_read(auth, &path).map_err(RpcAppError::Other)?;
-            let fid = st.db.resolve_existing_file_path(&path).await?;
-            let w = st.db.document_wc(fid).await?;
-            Ok(json!({
-                "bytes": w.bytes(),
-                "lines": w.lines(),
-                "words": w.words(),
-                "chars": w.chars(),
-            }))
+            let filter = tabularium::wc::WcMetricsFilter::from_rpc_params(&m);
+            let glob_parent = tabularium::glob_path::parent_and_glob_pattern(&path)
+                .map_err(RpcAppError::Other)?;
+            if let Some((parent, _)) = glob_parent {
+                check_read(auth, &parent).map_err(RpcAppError::Other)?;
+            } else {
+                check_read(auth, &path).map_err(RpcAppError::Other)?;
+            }
+            let recursive = m.get("recursive").and_then(Value::as_bool).unwrap_or(false);
+            let paths = tabularium::glob_path::resolve_wc_file_paths(&st.db, &path, recursive)
+                .await
+                .map_err(RpcAppError::Other)?;
+            let mut stats: Vec<tabularium::WcStats> = Vec::with_capacity(paths.len());
+            for p in &paths {
+                check_read(auth, p).map_err(RpcAppError::Other)?;
+                let fid = st.db.resolve_existing_file_path(p).await?;
+                stats.push(st.db.document_wc(fid).await?);
+            }
+            if paths.len() > 1 {
+                let files: Vec<Value> = paths
+                    .iter()
+                    .zip(&stats)
+                    .map(|(p, w)| tabularium::wc::wc_file_to_value(p, w, &filter))
+                    .collect();
+                let total = tabularium::wc::sum_wc_stats(&stats);
+                return Ok(json!({
+                    "files": files,
+                    "total": tabularium::wc::wc_stats_to_value(&total, &filter),
+                }));
+            }
+            Ok(tabularium::wc::wc_stats_to_value(&stats[0], &filter))
         }
         "stat" => {
             let path = rpc_path(&m, "path")?;
@@ -1328,6 +1604,7 @@ pub(crate) async fn dispatch_app_rpc(
                 "id": meta.id().raw(),
                 "path": meta.canonical_path(),
                 "size_bytes": meta.size_bytes(),
+                "mime_type": meta.mime_type(),
                 "line_count": lines,
                 "created_at": meta.created_at(),
                 "modified_at": meta.modified_at(),

@@ -45,6 +45,15 @@ impl WcStats {
         }
     }
 
+    pub(crate) fn from_totals(bytes: u64, lines: usize, words: usize, chars: usize) -> Self {
+        Self {
+            bytes,
+            lines,
+            words,
+            chars,
+        }
+    }
+
     pub fn bytes(&self) -> u64 {
         self.bytes
     }
@@ -70,6 +79,10 @@ pub struct SearchHit {
     snippet: String,
     score: f32,
     line_number: Option<usize>,
+    start_line: Option<usize>,
+    line_end: Option<usize>,
+    revision: Option<String>,
+    modified_at: Option<Timestamp>,
 }
 
 impl SearchHit {
@@ -86,7 +99,47 @@ impl SearchHit {
             snippet,
             score,
             line_number,
+            start_line: line_number,
+            line_end: line_number,
+            revision: None,
+            modified_at: None,
         }
+    }
+
+    pub fn start_line(&self) -> Option<usize> {
+        self.start_line
+    }
+    pub(crate) fn with_line_start(mut self, line: usize) -> Self {
+        self.start_line = Some(line);
+        self
+    }
+
+    pub(crate) fn with_source(mut self, revision: String, line_end: usize) -> Self {
+        self.revision = Some(revision);
+        self.line_end = Some(line_end);
+        self
+    }
+
+    pub(crate) fn with_modified_at(mut self, value: Timestamp) -> Self {
+        self.modified_at = Some(value);
+        self
+    }
+    pub fn modified_at(&self) -> Option<Timestamp> {
+        self.modified_at
+    }
+
+    pub(crate) fn set_score(&mut self, score: f32) {
+        self.score = score;
+    }
+
+    /// Last 1-based source line represented by this excerpt.
+    pub fn line_end(&self) -> Option<usize> {
+        self.line_end
+    }
+
+    /// Source revision for validated semantic excerpts.
+    pub fn revision(&self) -> Option<&str> {
+        self.revision.as_deref()
     }
 
     pub fn document_id(&self) -> EntryId {
@@ -212,6 +265,7 @@ pub struct DocumentMeta {
     /// UUID v4 string; every file row carries one after migration.
     revision: Option<String>,
     size_bytes: i64,
+    mime_type: Option<String>,
 }
 
 impl DocumentMeta {
@@ -237,7 +291,18 @@ impl DocumentMeta {
             accessed_at,
             revision,
             size_bytes,
+            mime_type: None,
         }
+    }
+
+    pub(crate) fn with_mime_type(mut self, mime_type: Option<String>) -> Self {
+        self.mime_type = mime_type;
+        self
+    }
+
+    /// Optional stored MIME type; callers may infer a preview format when absent.
+    pub fn mime_type(&self) -> Option<&str> {
+        self.mime_type.as_deref()
     }
 
     pub fn id(&self) -> EntryId {

@@ -12,10 +12,16 @@ use std::time::Duration;
 use clap::error::ErrorKind;
 use clap::{Parser, Subcommand};
 use tabularium::rpc::Client;
-use tabularium::{HeaderMap, TailMode, merge_header_line, merge_into, parse_tb_headers_env};
+use tabularium::{
+    HeaderMap, SearchKind, TailMode, merge_header_line, merge_into, parse_tb_headers_env,
+};
 
 fn parse_cli_tail_mode(s: &str) -> Result<TailMode, clap::Error> {
     TailMode::parse_cli_token(s).map_err(|msg| clap::Error::raw(ErrorKind::ValueValidation, msg))
+}
+
+fn parse_search_kind(s: &str) -> Result<SearchKind, String> {
+    s.parse().map_err(|e: tabularium::Error| e.to_string())
 }
 
 fn effective_auth_key(cli: &Cli) -> Option<String> {
@@ -93,7 +99,7 @@ pub(crate) enum Command {
     #[command(name = "acl-list")]
     AclList,
     /// Append to a document (`DIR/FILE`). Default safe: errors with `Duplicate` if the
-    /// document already exists; pass `--force` to deliberately append to an existing scroll.
+    /// document already exists; pass `--force` to deliberately append to an existing document.
     Append {
         path: String,
         file: Option<String>,
@@ -137,6 +143,16 @@ pub(crate) enum Command {
     Ec { path: String },
     /// Edit document in `$EDITOR` (`DIR/FILE`).
     Edit { path: String },
+    /// JSON metadata: show by default, or --import FILE, --export FILE, --edit ($EDITOR).
+    Meta {
+        path: String,
+        #[arg(long, conflicts_with_all = ["export", "edit"])]
+        import: Option<std::path::PathBuf>,
+        #[arg(long, conflicts_with = "edit")]
+        export: Option<std::path::PathBuf>,
+        #[arg(long)]
+        edit: bool,
+    },
     /// Export documents to the filesystem (recursive subtree).
     Export {
         /// `/` for the whole tree, or one directory path to export.
@@ -232,7 +248,7 @@ pub(crate) enum Command {
     #[command(name = "psk-list")]
     PskList,
     /// Create a document (`DIR/FILE`). Default safe: errors with `Duplicate` if the
-    /// document already exists; pass `--force` to deliberately overwrite an existing scroll.
+    /// document already exists; pass `--force` to deliberately overwrite an existing document.
     Put {
         /// `directory/file`.
         path: String,
@@ -242,9 +258,13 @@ pub(crate) enum Command {
         #[arg(short = 'f', long)]
         force: bool,
     },
-    /// Rebuild Tantivy: `/` = full rebuild, or one directory path for scoped reindex.
+    /// Rebuild search indexes: lexical (Tantivy), semantic, or hybrid (both, default).
     Reindex {
+        /// Search engine(s): lexical, semantic, hybrid.
+        #[arg(long,default_value="hybrid",value_parser=parse_search_kind)]
+        kind: SearchKind,
         /// `/` or directory path.
+        #[arg(default_value = "/")]
         path: String,
     },
     /// Remove file(s) (`DIR/FILE` or `DIR/GLOB`) or director(ies) (`DIR` or glob); `-r` only for directory paths.
@@ -253,11 +273,32 @@ pub(crate) enum Command {
         recursive: bool,
         path: String,
     },
-    /// Indexed full-text search across document body, file name, and description (`search` RPC; path substring walk — use `find`; line-regex — use `grep`).
+    /// Hybrid lexical/semantic search (`search` RPC; path walk: `find`; line-regex: `grep`).
     Search {
+        /// Print the complete structured report including revisions and truncation status.
+        #[arg(long)]
+        json: bool,
+        /// Maximum results (1..256; default 256).
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Maximum compact JSON search payload bytes (512..1048576; default 65536).
+        #[arg(long)]
+        max_output_bytes: Option<usize>,
+        /// Search engine(s): lexical, semantic, hybrid.
+        #[arg(long,default_value="hybrid",value_parser=parse_search_kind)]
+        kind: SearchKind,
         /// Limit hits to this directory subtree.
         #[arg(short = 'd', long = "directory")]
         directory: Option<String>,
+        /// Order: relevance or modified_desc (ties use canonical path).
+        #[arg(long, default_value = "relevance")]
+        sort: tabularium::SearchSort,
+        /// Exclusive lower modification-time bound in UNIX nanoseconds.
+        #[arg(long)]
+        modified_after: Option<u64>,
+        /// Exclusive upper modification-time bound in UNIX nanoseconds.
+        #[arg(long)]
+        modified_before: Option<u64>,
         /// Query string.
         query: Vec<String>,
     },
@@ -271,6 +312,9 @@ pub(crate) enum Command {
     },
     /// Inclusive 1-based line slice.
     Slice {
+        /// Assert the revision returned by search.
+        #[arg(long)]
+        expected_revision: Option<String>,
         path: String,
         start: u32,
         end: u32,
@@ -298,8 +342,21 @@ pub(crate) enum Command {
     Touch { path: String, time: Option<String> },
     /// Block until `DIR/FILE` changes (server long-poll timeout applies).
     Wait { path: String },
-    /// Byte/line/word/char counts.
-    Wc { path: String },
+    /// Line/word/byte/char counts (`-l`/`-w`/`-c`/`-m`; default GNU columns: lines, words, bytes). Final-segment glob (`/docs/*`) counts files in one directory level; `-r` walks subtrees (glob directories or a bare directory path).
+    Wc {
+        path: String,
+        #[arg(short = 'l')]
+        lines: bool,
+        #[arg(short = 'w')]
+        words: bool,
+        #[arg(short = 'c')]
+        bytes: bool,
+        #[arg(short = 'm')]
+        chars: bool,
+        /// Recursive file walk (required for bare directories; with globs, expands into matching directory subtrees).
+        #[arg(short = 'r', long = "recursive")]
+        recursive: bool,
+    },
     /// Show resolved ACL for the current key (`whoami` RPC).
     Whoami,
 }
@@ -337,7 +394,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             match execute::execute(&client, cmd, execute::ExecuteContext::Cli, None, opts).await {
                 Ok(execute::ExecuteOutcome::Ok) => {}
                 Ok(execute::ExecuteOutcome::Interrupted) => std::process::exit(130),
-                Err(e) => return Err(e),
+                Err(e) => {
+                    execute::print_cli_message(&e.to_string());
+                    std::process::exit(1);
+                }
             }
         }
     }
@@ -346,6 +406,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
 #[cfg(test)]
 mod cli_parse_tests {
+    #[test]
+    fn search_and_reindex_share_engine_selection_defaults() {
+        use super::{Cli, Command, SearchKind};
+        use clap::Parser;
+        let cli =
+            Cli::try_parse_from(["tb", "search", "--kind", "semantic", "restore files"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Search {
+                kind: SearchKind::Semantic,
+                ..
+            }
+        ));
+        let cli = Cli::try_parse_from(["tb", "reindex"]).unwrap();
+        assert!(
+            matches!(cli.command, Command::Reindex { kind: SearchKind::Hybrid, ref path } if path == "/")
+        );
+        assert!(Cli::try_parse_from(["tb", "search", "--kind", "bogus", "query"]).is_err());
+    }
+
     use super::*;
 
     #[test]

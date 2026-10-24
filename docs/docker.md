@@ -84,7 +84,7 @@ The container healthcheck probes `GET /api/test` on the API listener.
 
 ## Multi-arch publish (buildx)
 
-Two helper rites are provided:
+Two helper commands are provided:
 
 - `just prepare-docker` — sets up a local buildx builder
 - `just pub-docker` — builds and pushes a multi-arch image (amd64 + arm64)

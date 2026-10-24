@@ -221,7 +221,7 @@ function AclIdentityPanel({ who }: { who: Whoami }) {
       </div>
       {who.admin ? (
         <p className={styles.aclAdminLitany}>
-          Writ across the whole librarium — deny/allow lists waived by the Golden Throne.
+          Administrator access: read and write all documents.
         </p>
       ) : (
         <div className={styles.aclMatrix}>
@@ -289,7 +289,7 @@ export default function StatsView() {
   if (!totals && !statsLimited) {
     return (
       <div className={styles.root} data-testid="stats-root">
-        <p>Scanning the librarium…</p>
+        <p>Loading statistics…</p>
       </div>
     );
   }

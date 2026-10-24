@@ -58,6 +58,7 @@ fn assert_rpc_forbidden(v: &Value, ctx: &str) {
 fn read_file_rpc_matrix(path: &str, grep_pat: &str) -> Vec<(&'static str, Value)> {
     vec![
         ("get_document", json!({ "path": path })),
+        ("get_document_metadata", json!({ "path": path })),
         (
             "grep",
             json!({
@@ -561,4 +562,42 @@ async fn acl_ops_nomatch_psk_search_foreign_directory_forbidden() {
     )
     .await;
     assert_rpc_forbidden(&v, "search nomatch foreign dir");
+}
+
+#[tokio::test]
+async fn metadata_acl_protects_rest_and_rpc_writes() {
+    let fixture = spawn_acl_ops_fixture().await;
+    let client = reqwest::Client::new();
+    let path = "/test/file.txt";
+    let denied = rpc_json(
+        &client,
+        &fixture.base,
+        &fixture.key_exact,
+        "set_document_metadata",
+        json!({"path":path,"metadata":{"secret":"no"}}),
+    )
+    .await;
+    assert_rpc_forbidden(&denied, "read-only caller cannot write metadata");
+    let read = client
+        .get(format!("{}/api/metadata{path}", fixture.base))
+        .header("X-Auth-Key", &fixture.key_exact)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(read.status(), reqwest::StatusCode::OK);
+    let denied = client
+        .get(format!("{}/api/metadata/other/file.txt", fixture.base))
+        .header("X-Auth-Key", &fixture.key_exact)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), reqwest::StatusCode::FORBIDDEN);
+    let write = client
+        .put(format!("{}/api/metadata{path}", fixture.base))
+        .header("X-Auth-Key", &fixture.key_exact)
+        .json(&json!({"metadata":{}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(write.status(), reqwest::StatusCode::FORBIDDEN);
 }

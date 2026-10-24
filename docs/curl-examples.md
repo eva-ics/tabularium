@@ -110,4 +110,4 @@ curl -sS "$BASE/api/whoami" \
   -H 'X-JWT-Assertion: YOUR_SIGNED_ASSERTION'
 ```
 
-_Serve the Omnissiah; verify `Location` headers match your percent-encoded names._
+_Verify `Location` headers match your percent-encoded names._

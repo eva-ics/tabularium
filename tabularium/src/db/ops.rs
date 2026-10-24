@@ -1,7 +1,5 @@
 //! Higher-level document operations (resolve keys, text slices, search hits).
 
-use std::collections::HashMap;
-
 use regex::Regex;
 use tracing::instrument;
 
@@ -263,41 +261,118 @@ impl<S: Storage> Database<S> {
         limit: usize,
         restrict_to_document: Option<EntryId>,
     ) -> Result<Vec<SearchHit>> {
-        let norm = directory_prefix.and_then(|p| {
-            let t = p.trim();
-            if t.is_empty() || t == "/" {
-                None
-            } else {
-                Some(t.trim_end_matches('/'))
-            }
-        });
+        self.search_hits_authorized(
+            keywords.as_ref(),
+            directory_prefix,
+            limit,
+            restrict_to_document,
+            None,
+            crate::SearchOptions::default(),
+        )
+        .await
+    }
+
+    pub(super) async fn search_hits_authorized(
+        &self,
+        keywords: &str,
+        directory_prefix: Option<&str>,
+        limit: usize,
+        restrict_to_document: Option<EntryId>,
+        auth: Option<&crate::AuthContext>,
+        options: crate::SearchOptions,
+    ) -> Result<Vec<SearchHit>> {
+        let norm = directory_prefix
+            .map(str::trim)
+            .filter(|p| !p.is_empty() && *p != "/")
+            .map(|p| p.trim_end_matches('/'));
         let scored = self
             .search
-            .search_scored(keywords.as_ref(), norm, restrict_to_document)
+            .search_scored(keywords, norm, restrict_to_document)
             .await?;
-        let take = scored.len().min(limit);
-        let scored: Vec<_> = scored.into_iter().take(take).collect();
-        let ids: Vec<EntryId> = scored.iter().map(|(id, _)| *id).collect();
-        let rows = self.storage.files_display_batch(&ids).await?;
-        let mut map: HashMap<i64, (String, String)> = HashMap::new();
-        for (id, path, body) in rows {
-            map.insert(id.raw(), (path, body));
-        }
-        let mut hits = Vec::new();
+        let mut candidates = Vec::new();
         for (id, score) in scored {
-            let Some((path, content)) = map.get(&id.raw()) else {
-                continue;
+            let meta = match self.storage.get_file_meta(id).await {
+                Ok(m) => m,
+                Err(Error::NotFound(_)) => continue,
+                Err(e) => return Err(e),
             };
-            let (snippet, line_number) = search_snippet_and_line(content, keywords.as_ref());
-            hits.push(SearchHit::new(
-                id,
-                path.clone(),
-                snippet,
-                score,
-                line_number,
-            ));
+            let path = meta.canonical_path();
+            if norm.is_some_and(|p| !path.starts_with(&format!("{p}/")))
+                || auth.is_some_and(|a| a.check_read_abs(path).is_err())
+                || !options.matches_modified(meta.modified_at().as_nanos())
+            {
+                continue;
+            }
+            candidates.push((id, score, meta));
+        }
+        candidates.sort_by(|a, b| {
+            let order = match options.sort {
+                crate::SearchSort::Relevance => b.1.total_cmp(&a.1),
+                crate::SearchSort::ModifiedDesc => b.2.modified_at().cmp(&a.2.modified_at()),
+            };
+            order
+                .then_with(|| a.2.canonical_path().cmp(b.2.canonical_path()))
+                .then_with(|| a.0.raw().cmp(&b.0.raw()))
+        });
+        let mut hits = Vec::new();
+        for (id, score, before) in candidates {
+            if hits.len() >= limit {
+                break;
+            }
+            let path = before.canonical_path();
+            let content = self.storage.get_file_content(id).await?;
+            let after = self.storage.get_file_meta(id).await?;
+            if before.revision() != after.revision()
+                || before.canonical_path() != after.canonical_path()
+            {
+                continue;
+            }
+            let (snippet, line_start, line_end, line_number) =
+                exact_search_excerpt(&content, keywords);
+            let mut hit = SearchHit::new(id, path.into(), snippet, score, Some(line_number))
+                .with_modified_at(before.modified_at())
+                .with_line_start(line_start);
+            if let Some(revision) = before.revision() {
+                hit = hit.with_source(revision.into(), line_end);
+            }
+            hits.push(hit);
         }
         Ok(hits)
+    }
+
+    /// Read source and revision consistently, optionally asserting the search revision.
+    pub async fn document_slice_versioned(
+        &self,
+        id: EntryId,
+        start: u32,
+        end: u32,
+        expected: Option<&str>,
+    ) -> Result<(String, String)> {
+        if start == 0 || start > end {
+            return Err(Error::InvalidInput("line range invalid".into()));
+        }
+        let before = self.storage.get_file_meta(id).await?;
+        let revision = before
+            .revision()
+            .ok_or_else(|| Error::InvalidInput("document has no revision".into()))?;
+        if expected.is_some_and(|r| r != revision) {
+            return Err(Error::RevisionMismatch(
+                "document changed since search".into(),
+            ));
+        }
+        let body = self.storage.get_file_content(id).await?;
+        let after = self.storage.get_file_meta(id).await?;
+        if before.revision() != after.revision()
+            || before.canonical_path() != after.canonical_path()
+        {
+            return Err(Error::RevisionMismatch(
+                "document changed while reading".into(),
+            ));
+        }
+        Ok((
+            slice_lines(&body, start as usize, end as usize),
+            revision.into(),
+        ))
     }
 
     #[instrument(skip(self, path), err(Debug))]
@@ -445,6 +520,8 @@ impl<S: Storage> Database<S> {
             let body = self.get_document(fid).await?;
             self.put_document_by_path(&dst_file, &body, true, None)
                 .await?;
+            self.set_document_metadata(&dst_file, &self.storage.file_metadata(fid).await?, None)
+                .await?;
             return Ok(());
         }
 
@@ -498,6 +575,12 @@ impl<S: Storage> Database<S> {
                     let body = self.get_document(fid).await?;
                     self.put_document_by_path(&dst_child, &body, true, None)
                         .await?;
+                    self.set_document_metadata(
+                        &dst_child,
+                        &self.storage.file_metadata(fid).await?,
+                        None,
+                    )
+                    .await?;
                 }
             }
         }
@@ -531,33 +614,28 @@ fn floor_utf8_boundary(s: &str, mut i: usize) -> usize {
     i
 }
 
-fn search_snippet_and_line(content: &str, query: &str) -> (String, Option<usize>) {
-    let q = query.trim();
-    if q.is_empty() {
-        return (content.chars().take(200).collect(), None);
-    }
-    let needle = q.split_whitespace().next().unwrap_or("");
-    if needle.is_empty() {
-        return (content.chars().take(200).collect(), None);
-    }
-    let Ok(re) = Regex::new(&format!(r"(?i){}", regex::escape(needle))) else {
-        return (content.chars().take(200).collect(), None);
+/// An exact UTF-8 source excerpt, with the range of lines containing its bytes.
+fn exact_search_excerpt(content: &str, query: &str) -> (String, usize, usize, usize) {
+    let token = query.split_whitespace().next().unwrap_or("");
+    let pos = if token.is_empty() {
+        0
+    } else {
+        Regex::new(&format!("(?i){}", regex::escape(token)))
+            .ok()
+            .and_then(|re| re.find(content).map(|m| m.start()))
+            .unwrap_or(0)
     };
-    let Some(m) = re.find(content) else {
-        return (content.chars().take(200).collect(), None);
-    };
-    let pos = m.start();
-    let match_end = m.end();
-    let line_number = Some(1 + content[..pos].bytes().filter(|&b| b == b'\n').count());
-    let start_byte = pos.saturating_sub(40);
-    let start = floor_utf8_boundary(content, start_byte);
-    let slice = content.get(start..).unwrap_or(content);
-    let mut s: String = slice.chars().take(200).collect();
-    if start > 0 {
-        s.insert(0, '…');
-    }
-    if match_end < content.len() {
-        s.push('…');
-    }
-    (s, line_number)
+    let start = floor_utf8_boundary(content, pos.saturating_sub(40));
+    let end = floor_utf8_boundary(content, (start + 768).min(content.len()));
+    let excerpt = &content[start..end];
+    let first = 1 + content[..start].bytes().filter(|&b| b == b'\n').count();
+    let last = first
+        + excerpt
+            .strip_suffix('\n')
+            .unwrap_or(excerpt)
+            .bytes()
+            .filter(|&b| b == b'\n')
+            .count();
+    let matched_line = 1 + content[..pos].bytes().filter(|&b| b == b'\n').count();
+    (excerpt.into(), first, last, matched_line)
 }
