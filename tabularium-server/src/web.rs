@@ -883,8 +883,10 @@ async fn rpc_dispatch(State(st): State<AppState>, headers: HeaderMap, body: Byte
     if req.jsonrpc != "2.0" {
         return Json(rpc_error(req.id, -32600, "invalid jsonrpc version"));
     }
+    // Explicit root: param previews must not attach to Axum/OTLP parent spans.
     info!(
         target: "tabularium_server::rpc",
+        parent: None,
         transport = "http",
         method = %req.method,
         params = %crate::rpc_preview::format_rpc_params_preview(req.params.as_ref()),

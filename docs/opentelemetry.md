@@ -72,7 +72,7 @@ mcp.tools/call                    (mcp.tool / mcp.method / otel.status_code)
 - `otel.status_code` — `OK` or `ERROR`
 - `error.type` — `auth_error` or `tool_error` when failed
 
-Request bodies, search queries, and document contents are **not** recorded as span attributes or span events (RPC param previews stay on the fmt log only).
+Request bodies, search queries, and document contents are **not** recorded as span attributes or span events. RPC param previews are emitted with `parent: None` so they stay on the fmt log even when an MCP-transport or HTTP parent span is active.
 
 Application-level tool failures (`Err(String)` from MCP tools) mark the span as error even when the HTTP transport returns 200.
 

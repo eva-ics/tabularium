@@ -13,6 +13,7 @@ use tabularium::SqliteDatabase;
 use tabularium_server::mcp::TabulariumMcp;
 use tabularium_server::otel::Telemetry;
 use tabularium_server::web::AppState;
+use tracing::Instrument;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
@@ -106,22 +107,38 @@ async fn mcp_params_and_bodies_stay_out_of_otel_export() {
     let marker = "otel-secret-body-should-never-export-9f3c2a1b";
     let (app, _dir) = seeded_app().await;
     let mcp = TabulariumMcp::new(app, Arc::from(""), false);
-    mcp.invoke_rpc_for_test(
-        "put_document",
-        json!({
-            "path": "/notes/secret.md",
-            "content": marker,
-            "force": true,
-        }),
-    )
-    .await
-    .expect("put ok");
-    mcp.invoke_rpc_for_test("search", json!({ "query": marker }))
+    // MCP transport (and Axum) keep an outer tracing span; param previews must
+    // stay off OTLP even when that parent is active — not only off mcp.tools/call.
+    let transport = tracing::info_span!(
+        "mcp.transport",
+        otel.name = "mcp.transport",
+        "rpc.system" = "mcp",
+    );
+    async {
+        mcp.invoke_rpc_for_test(
+            "put_document",
+            json!({
+                "path": "/notes/secret.md",
+                "content": marker,
+                "force": true,
+            }),
+        )
         .await
-        .expect("search ok");
+        .expect("put ok");
+        mcp.invoke_rpc_for_test("search", json!({ "query": marker }))
+            .await
+            .expect("search ok");
+    }
+    .instrument(transport)
+    .await;
 
     provider.force_flush().unwrap();
     let spans = exporter.get_finished_spans().unwrap();
+    assert!(
+        spans.iter().any(|s| s.name.as_ref() == "mcp.transport"),
+        "expected outer transport span in export: {:?}",
+        spans.iter().map(|s| s.name.as_ref()).collect::<Vec<_>>()
+    );
     for span in &spans {
         for kv in &span.attributes {
             let hay = format!("{}={}", kv.key.as_str(), kv.value.as_str());

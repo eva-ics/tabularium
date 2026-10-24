@@ -204,11 +204,13 @@ impl TabulariumMcp {
             otel.status_code = field::Empty,
             error.type = field::Empty,
         );
-        // Log params before entering the OTLP span so bodies/queries stay on fmt only.
+        // Detach from any active span (MCP transport / Axum / tools/call) so the
+        // param preview stays on fmt and never becomes an OTLP span event.
         let mcp_full_only_tool = MCP_FULL_ONLY_TOOL_NAMES.contains(&method)
             || MCP_FULL_ONLY_ACL_PSK_TOOL_NAMES.contains(&method);
         info!(
             target: "tabularium_server::rpc",
+            parent: None,
             transport = "mcp",
             mcp_full = self.mcp_full,
             mcp_full_only_tool,
