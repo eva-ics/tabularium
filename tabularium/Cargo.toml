@@ -22,6 +22,7 @@ db = [
     "dep:dashmap",
     "dep:dateparser",
     "dep:fs-err",
+    "dep:globset",
     "dep:moka",
     "dep:regex",
     "dep:serde_json",
@@ -48,6 +49,7 @@ dashmap = { version = "6", optional = true }
 dateparser = { version = "0.2", optional = true }
 futures-util = { version = "0.3", default-features = false, features = ["sink"], optional = true }
 fs-err = { version = "3", optional = true }
+globset = { version = "0.4", optional = true }
 moka = { version = "0.12", features = ["future"], optional = true }
 regex = { version = "1", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }

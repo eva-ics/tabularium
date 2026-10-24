@@ -108,7 +108,13 @@ create_directory — path, description optional, parents optional (`true` = POSI
 describe — path; optional description string (omit to read; empty string clears).
 document_exists — path (wire RPC name `exists`; tests file only).
 stat — path (includes `revision` for files).
-wc — path.
+wc — path; optional `recursive`, `lines`, `words`, `bytes`, `chars` (booleans). Count lines/words/bytes/chars like CLI `tb wc`. `path` may use a **final-segment glob** only (`/docs/*.md`, `/projects/bms/*`). Without `recursive`, glob matches **files directly in that folder** (not subfolders). With `recursive: true`, each **matched directory** is walked for all files beneath it; a **bare directory path** also requires `recursive`. Omit metric flags → all four fields; set flags to select columns (`bytes` = UTF-8 length, POSIX `wc -c`; `chars` = Unicode scalars). Response: **one resolved file** → flat `{ bytes, lines, words, chars }` (subset when flags set); **two or more files** → `{ "files": [{ "path", …counts }], "total": { …counts } }`. Errors: bare directory without `recursive` → `wc: PATH: is a directory`; glob matches only subdirectories without `recursive` → hint to use `recursive`.
+  Examples (request → shape):
+  • One file, all metrics: `{ "path": "/docs/readme.md" }` → `{ "bytes", "lines", "words", "chars" }`
+  • Lines only: `{ "path": "/docs/readme.md", "lines": true }` → `{ "lines": 42 }`
+  • Markdown in one folder (non-recursive): `{ "path": "/docs/*.md", "lines": true }` → `{ "files": [{ "path", "lines" }, …], "total": { "lines" } }`
+  • Project tree via glob on subdirs: `{ "path": "/projects/bms/*", "recursive": true, "lines": true }` → all files under each immediate child of `bms`
+  • Whole subtree: `{ "path": "/projects/bms", "recursive": true, "bytes": true }` → every file under `bms`
 head — path, lines optional (default 10 like GNU head); number or string integer (`0` = zero lines, not unlimited).
 tail — path, lines optional (default 10 last lines like GNU tail); number, string integer (`0` = zero lines), or "+N" from-line form.
 slice — path, start_line/end_line or from_line/to_line aliases (1-based inclusive); numbers or string integers.
@@ -404,6 +410,21 @@ struct GrepArg {
     max_matches: Option<u64>,
     #[serde(default)]
     invert_match: Option<bool>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct WcArg {
+    path: String,
+    #[serde(default)]
+    recursive: Option<bool>,
+    #[serde(default)]
+    lines: Option<bool>,
+    #[serde(default)]
+    words: Option<bool>,
+    #[serde(default)]
+    bytes: Option<bool>,
+    #[serde(default)]
+    chars: Option<bool>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -752,14 +773,43 @@ impl TabulariumMcp {
             .await
     }
 
-    #[tool(description = "Line/word/byte counts (JSON-RPC wc).")]
+    #[tool(
+        description = r#"Line/word/byte/char counts (JSON-RPC wc). Like `tb wc -l/-w/-c/-m` and `-r`.
+
+Params: `path` (required); optional booleans `recursive`, `lines`, `words`, `bytes`, `chars`. Final-segment glob only (`/docs/*.md`, `/projects/bms/*`). Without `recursive`, glob counts files in one directory level. With `recursive`, matched directories and bare directory paths walk full subtrees. Omit metric flags for all four counts.
+
+Response: single file → flat object; two or more files → `{ "files": [{ "path", … }], "total": { … } }`.
+
+Examples:
+• `{ "path": "/docs/readme.md" }` — all metrics on one file
+• `{ "path": "/docs/readme.md", "lines": true }` — lines only
+• `{ "path": "/docs/*.md", "lines": true }` — each `.md` in `/docs` + total
+• `{ "path": "/projects/bms/*", "recursive": true, "lines": true }` — lines in every file under each child of `bms` (use when the folder contains only subdirectories)
+• `{ "path": "/projects/bms", "recursive": true, "bytes": true }` — UTF-8 bytes for the whole `bms` tree"#
+    )]
     async fn wc(
         &self,
         Extension(parts): Extension<Parts>,
-        Parameters(p): Parameters<PathArg>,
+        Parameters(p): Parameters<WcArg>,
     ) -> Result<String, String> {
-        self.call_rpc_json(&parts, "wc", json!({ "path": p.path }))
-            .await
+        let mut m = Map::new();
+        m.insert("path".into(), json!(p.path));
+        if let Some(v) = p.recursive {
+            m.insert("recursive".into(), json!(v));
+        }
+        if let Some(v) = p.lines {
+            m.insert("lines".into(), json!(v));
+        }
+        if let Some(v) = p.words {
+            m.insert("words".into(), json!(v));
+        }
+        if let Some(v) = p.bytes {
+            m.insert("bytes".into(), json!(v));
+        }
+        if let Some(v) = p.chars {
+            m.insert("chars".into(), json!(v));
+        }
+        self.call_rpc_json(&parts, "wc", Value::Object(m)).await
     }
 
     #[tool(

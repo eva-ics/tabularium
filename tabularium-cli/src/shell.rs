@@ -23,7 +23,7 @@ use tokio::runtime::Handle;
 
 use crate::execute::{
     ExecuteContext, ExecuteOutcome, ShellChildRpc, cmd_mcd, execute, execute_opts_from_command,
-    join_abs_dir_entry,
+    join_abs_dir_entry, print_cli_message,
 };
 use crate::shell_path::{
     resolve_ls_directory, resolve_shell_doc_path, resolve_shell_rm_path, resolve_shell_tree_scope,
@@ -170,6 +170,7 @@ fn flags_for(sub: &str) -> &'static [&'static str] {
         "reindex" => &["--kind"],
         "grep" => &["-m", "-v", "--invert-match"],
         "head" => &["-n", "--raw"],
+        "wc" => &["-l", "-w", "-c", "-m", "-r", "--recursive"],
         "import" => &["-n", "--name"],
         "l" | "ll" | "ls" => &["-t", "--time", "-r", "--reverse"],
         "lt" => &["-r", "--reverse"],
@@ -1459,8 +1460,20 @@ pub(crate) fn apply_shell_cwd(cmd: Command, shell_cwd: Option<&str>) -> Result<C
         Command::Stat { path } => Command::Stat {
             path: resolve_shell_doc_path(&path, shell_cwd)?,
         },
-        Command::Wc { path } => Command::Wc {
+        Command::Wc {
+            path,
+            lines,
+            words,
+            bytes,
+            chars,
+            recursive,
+        } => Command::Wc {
             path: resolve_shell_doc_path(&path, shell_cwd)?,
+            lines,
+            words,
+            bytes,
+            chars,
+            recursive,
         },
         Command::Meta {
             path,
@@ -1917,7 +1930,7 @@ fn run_shell_blocking(
                     "help" | "h" | "?" => {
                         push_history(&mut rl, &history_path, trimmed)?;
                         if let Err(e) = print_shell_help() {
-                            eprintln!("{e}");
+                            print_cli_message(&e.to_string());
                         }
                         continue;
                     }
@@ -1935,7 +1948,7 @@ fn run_shell_blocking(
                             push_history(&mut rl, &history_path, trimmed)?;
                         }
                         Err(e) => {
-                            eprintln!("{e}");
+                            print_cli_message(&e.to_string());
                             push_history(&mut rl, &history_path, trimmed)?;
                         }
                     }
@@ -1948,7 +1961,7 @@ fn run_shell_blocking(
                             push_history(&mut rl, &history_path, trimmed)?;
                         }
                         Err(e) => {
-                            eprintln!("{e}");
+                            print_cli_message(&e.to_string());
                             push_history(&mut rl, &history_path, trimmed)?;
                         }
                     }
@@ -1967,7 +1980,7 @@ fn run_shell_blocking(
                                 push_history(&mut rl, &history_path, trimmed)?;
                             }
                             Err(e) => {
-                                eprintln!("{e}");
+                                print_cli_message(&e.to_string());
                                 push_history(&mut rl, &history_path, trimmed)?;
                             }
                         }
@@ -1983,7 +1996,7 @@ fn run_shell_blocking(
                         continue;
                     }
                     if let Err(e) = exec_shell_line(script) {
-                        eprintln!("{e}");
+                        print_cli_message(&e.to_string());
                     }
                     push_history(&mut rl, &history_path, trimmed)?;
                     continue;
@@ -2000,7 +2013,7 @@ fn run_shell_blocking(
                 ) {
                     Ok(p) => p,
                     Err(e) => {
-                        eprintln!("{e}");
+                        print_cli_message(&e.to_string());
                         push_history(&mut rl, &history_path, trimmed)?;
                         continue;
                     }
@@ -2013,7 +2026,7 @@ fn run_shell_blocking(
                     match apply_shell_cwd(parsed.command, g.cwd.as_deref()) {
                         Ok(c) => c,
                         Err(e) => {
-                            eprintln!("{e}");
+                            print_cli_message(&e.to_string());
                             push_history(&mut rl, &history_path, trimmed)?;
                             continue;
                         }
@@ -2042,7 +2055,7 @@ fn run_shell_blocking(
                                 g.invalidate_all();
                             }
                         }
-                        Err(e) => eprintln!("{e}"),
+                        Err(e) => print_cli_message(&e.to_string()),
                     }
                     rl = build_editor(
                         Arc::clone(&client),
@@ -2074,7 +2087,7 @@ fn run_shell_blocking(
                         push_history(&mut rl, &history_path, trimmed)?;
                     }
                     Err(e) => {
-                        eprintln!("{e}");
+                        print_cli_message(&e.to_string());
                         push_history(&mut rl, &history_path, trimmed)?;
                     }
                 }
@@ -2392,7 +2405,17 @@ mod shell_cwd_tests {
                 "c/d",
             ),
             (Command::Stat { path: "d".into() }, "c/d"),
-            (Command::Wc { path: "d".into() }, "c/d"),
+            (
+                Command::Wc {
+                    path: "d".into(),
+                    lines: false,
+                    words: false,
+                    bytes: false,
+                    chars: false,
+                    recursive: false,
+                },
+                "c/d",
+            ),
             (Command::Ec { path: "d".into() }, "c/d"),
             (Command::Edit { path: "d".into() }, "c/d"),
             (Command::Wait { path: "d".into() }, "c/d"),
@@ -2413,7 +2436,7 @@ mod shell_cwd_tests {
             | Command::Chat { path: p, .. }
             | Command::Slice { path: p, .. }
             | Command::Stat { path: p }
-            | Command::Wc { path: p }
+            | Command::Wc { path: p, .. }
             | Command::Ec { path: p }
             | Command::Edit { path: p }
             | Command::Wait { path: p }
@@ -2801,6 +2824,11 @@ mod shell_cwd_tests {
             (
                 Command::Wc {
                     path: "/c/d".into(),
+                    lines: false,
+                    words: false,
+                    bytes: false,
+                    chars: false,
+                    recursive: false,
                 },
                 "c/d",
             ),
@@ -2836,7 +2864,7 @@ mod shell_cwd_tests {
             | Command::Chat { path: p, .. }
             | Command::Slice { path: p, .. }
             | Command::Stat { path: p }
-            | Command::Wc { path: p }
+            | Command::Wc { path: p, .. }
             | Command::Ec { path: p }
             | Command::Edit { path: p }
             | Command::Wait { path: p }
@@ -2846,6 +2874,49 @@ mod shell_cwd_tests {
             };
             assert_eq!(p, expect);
         }
+    }
+
+    #[test]
+    fn wc_parses_metric_flags() {
+        use crate::ShellCommandOnly;
+        use clap::Parser;
+        let c = ShellCommandOnly::parse_from(["tb", "wc", "-l", "-w", "/docs/*"]);
+        let Command::Wc {
+            path,
+            lines,
+            words,
+            bytes,
+            chars,
+            recursive,
+        } = c.command
+        else {
+            panic!("expected wc");
+        };
+        assert_eq!(path, "/docs/*");
+        assert!(lines);
+        assert!(words);
+        assert!(!bytes);
+        assert!(!chars);
+        assert!(!recursive);
+    }
+
+    #[test]
+    fn wc_parses_recursive_flag() {
+        use crate::ShellCommandOnly;
+        use clap::Parser;
+        let c = ShellCommandOnly::parse_from(["tb", "wc", "-l", "-r", "projects/bms/*"]);
+        let Command::Wc {
+            path,
+            lines,
+            recursive,
+            ..
+        } = c.command
+        else {
+            panic!("expected wc");
+        };
+        assert_eq!(path, "projects/bms/*");
+        assert!(lines);
+        assert!(recursive);
     }
 
     #[test]

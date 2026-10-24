@@ -1563,15 +1563,37 @@ pub(crate) async fn dispatch_app_rpc(
         }
         "wc" => {
             let path = rpc_path(&m, "path")?;
-            check_read(auth, &path).map_err(RpcAppError::Other)?;
-            let fid = st.db.resolve_existing_file_path(&path).await?;
-            let w = st.db.document_wc(fid).await?;
-            Ok(json!({
-                "bytes": w.bytes(),
-                "lines": w.lines(),
-                "words": w.words(),
-                "chars": w.chars(),
-            }))
+            let filter = tabularium::wc::WcMetricsFilter::from_rpc_params(&m);
+            let glob_parent = tabularium::glob_path::parent_and_glob_pattern(&path)
+                .map_err(RpcAppError::Other)?;
+            if let Some((parent, _)) = glob_parent {
+                check_read(auth, &parent).map_err(RpcAppError::Other)?;
+            } else {
+                check_read(auth, &path).map_err(RpcAppError::Other)?;
+            }
+            let recursive = m.get("recursive").and_then(Value::as_bool).unwrap_or(false);
+            let paths = tabularium::glob_path::resolve_wc_file_paths(&st.db, &path, recursive)
+                .await
+                .map_err(RpcAppError::Other)?;
+            let mut stats: Vec<tabularium::WcStats> = Vec::with_capacity(paths.len());
+            for p in &paths {
+                check_read(auth, p).map_err(RpcAppError::Other)?;
+                let fid = st.db.resolve_existing_file_path(p).await?;
+                stats.push(st.db.document_wc(fid).await?);
+            }
+            if paths.len() > 1 {
+                let files: Vec<Value> = paths
+                    .iter()
+                    .zip(&stats)
+                    .map(|(p, w)| tabularium::wc::wc_file_to_value(p, w, &filter))
+                    .collect();
+                let total = tabularium::wc::sum_wc_stats(&stats);
+                return Ok(json!({
+                    "files": files,
+                    "total": tabularium::wc::wc_stats_to_value(&total, &filter),
+                }));
+            }
+            Ok(tabularium::wc::wc_stats_to_value(&stats[0], &filter))
         }
         "stat" => {
             let path = rpc_path(&m, "path")?;
