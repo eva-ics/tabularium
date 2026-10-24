@@ -30,6 +30,7 @@ use crate::web::{AppState, RpcAppError, dispatch_app_rpc};
 #[derive(Debug, Deserialize, JsonSchema)]
 struct MetadataArg {
     path: String,
+    #[schemars(with = "Map<String, Value>")]
     metadata: Value,
     #[serde(default)]
     only_if_revision: Option<String>,
@@ -1160,6 +1161,22 @@ mod search_option_tests {
     use bma_ts::Monotonic;
     use std::time::Duration;
     use tabularium::SqliteDatabase;
+
+    #[test]
+    fn metadata_schema_uses_an_object_for_strict_mcp_clients() {
+        let schema = serde_json::to_value(schemars::schema_for!(MetadataArg)).unwrap();
+        let properties = schema["properties"].as_object().unwrap();
+        assert!(properties.values().all(Value::is_object));
+        let metadata = &properties["metadata"];
+        assert_eq!(metadata["type"], "object");
+        assert_eq!(metadata["additionalProperties"], true);
+        assert!(
+            schema["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("metadata"))
+        );
+    }
 
     #[tokio::test]
     async fn mcp_metadata_roundtrip_and_revision_conflict() {
