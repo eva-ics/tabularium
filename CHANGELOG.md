@@ -4,6 +4,8 @@
 
 ### Added
 
+- Web UI maps human librarium URLs (`/projects/…/doc.md`) to the entries
+  browser instead of sending unknown paths to the library root.
 - Optional OpenAI-compatible embeddings with custom headers and a rebuildable
   semantic sidecar; lexical, semantic and hybrid search/reindex modes across
   REST, JSON-RPC, MCP, CLI and Web UI.
