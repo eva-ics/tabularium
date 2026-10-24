@@ -14,13 +14,21 @@ import {
 } from "./trustedAuthContext";
 import { verifyPskWithServer } from "./verifyPsk";
 
-async function whoamiOkWithoutKey(): Promise<boolean> {
+/** Guest `/api/whoami` — optional `anonymous` tells OIDC assertion apart from `[anonymous]`. */
+async function fetchWhoamiBody(): Promise<{ anonymous?: boolean } | null> {
   try {
     const w = await fetch("/api/whoami");
-    return w.ok && w.status === 200;
+    if (!w.ok || w.status !== 200) {
+      return null;
+    }
+    return (await w.json()) as { anonymous?: boolean };
   } catch {
-    return false;
+    return null;
   }
+}
+
+async function whoamiOkWithoutKey(): Promise<boolean> {
+  return (await fetchWhoamiBody()) !== null;
 }
 
 export function AuthShell() {
@@ -58,9 +66,10 @@ export function AuthShell() {
         }
         setAuthenticateApi(true);
         if (j.oidc_enabled === true) {
-          const w = await fetch("/api/whoami");
+          // Guest `[anonymous]` whoami also succeeds — only a real assertion skips the PSK flow.
+          const who = await fetchWhoamiBody();
           if (cancelled) return;
-          if (w.ok && w.status === 200) {
+          if (who !== null && who.anonymous !== true) {
             setOidcAssertionAuth(true);
             setAnonymousAuth(false);
             setAnonymousAvailable(false);

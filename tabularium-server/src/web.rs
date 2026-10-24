@@ -15,8 +15,8 @@ use tracing::info;
 
 use crate::auth::{
     RequestAuth, check_read, check_search_directory_traverse, check_write,
-    directory_listing_requires_parent_readable, filter_listed_children, require_mgmt_admin,
-    resolve_request_auth_arc, whoami_json,
+    directory_listing_requires_parent_readable, filter_listed_children, is_anonymous_auth,
+    require_mgmt_admin, resolve_request_auth_arc, whoami_json,
 };
 use crate::jwt_assertion::AssertionRuntime;
 use crate::otel;
@@ -139,7 +139,13 @@ async fn api_test(State(st): State<AppState>) -> ApiResult<Json<Value>> {
 
 async fn api_whoami(State(st): State<AppState>, headers: HeaderMap) -> ApiResult<Json<Value>> {
     let auth = api_resolve_auth(&st, &headers).await?;
-    Ok(Json(whoami_json(&auth)))
+    let anonymous = is_anonymous_auth(&auth, &headers, st.oidc.as_deref());
+    let mut body = whoami_json(&auth);
+    // The Web UI tells a guest session apart from an upstream OIDC assertion by this flag.
+    if let Value::Object(map) = &mut body {
+        map.insert("anonymous".into(), Value::Bool(anonymous));
+    }
+    Ok(Json(body))
 }
 
 async fn api_resolve_auth(st: &AppState, headers: &HeaderMap) -> Result<RequestAuth, ApiError> {

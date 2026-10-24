@@ -128,6 +128,25 @@ pub(crate) async fn resolve_request_auth(
     }
 }
 
+/// Checks whether a successful [`resolve_request_auth`] used the configured `[anonymous]` principal.
+///
+/// Only that fallback resolves without an assertion header and without `X-Auth-Key`.
+pub(crate) fn is_anonymous_auth(
+    auth: &RequestAuth,
+    headers: &HeaderMap,
+    oidc: Option<&AssertionRuntime>,
+) -> bool {
+    let assertion_absent = oidc.is_none_or(|rt| {
+        matches!(
+            peek_assertion_header(headers, rt.header_name()),
+            AssertionHeader::Absent
+        )
+    });
+    matches!(auth, RequestAuth::Authenticated(_))
+        && assertion_absent
+        && matches!(peek_x_auth_key(headers), AuthKeyHeader::Absent)
+}
+
 /// [`Arc`] wrapper indirection so REST/MCP/WebSocket share the same resolver without borrow fights.
 pub(crate) async fn resolve_request_auth_arc(
     db: &SqliteDatabase,

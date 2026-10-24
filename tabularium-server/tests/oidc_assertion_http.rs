@@ -7,8 +7,8 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use bma_ts::Monotonic;
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use serde_json::json;
-use tabularium::SqliteDatabase;
 use tabularium::jsonrpc_codes::UNAUTHORIZED;
+use tabularium::{AclBodyJson, AclSideJson, AuthContext, SqliteDatabase};
 use tabularium_server::config::OidcSection;
 use tabularium_server::jwt_assertion::AssertionRuntime;
 use tabularium_server::web::{AppState, router};
@@ -34,6 +34,12 @@ fn mint_hs256(secret: &[u8], groups: &[&str]) -> String {
 }
 
 async fn spawn_oidc_authenticated_server() -> (String, Vec<u8>, &'static str, TempDir) {
+    spawn_oidc_server(None).await
+}
+
+async fn spawn_oidc_server(
+    anonymous: Option<AuthContext>,
+) -> (String, Vec<u8>, &'static str, TempDir) {
     let dir = TempDir::new().unwrap();
     let secret: Vec<u8> = b"unit-test-hs256-secret-key-bytes!".to_vec();
     let k_b64 = URL_SAFE_NO_PAD.encode(&secret);
@@ -75,7 +81,7 @@ async fn spawn_oidc_authenticated_server() -> (String, Vec<u8>, &'static str, Te
         authenticate_api: true,
         authenticate_mcp: false,
         oidc: Some(oidc),
-        anonymous: None,
+        anonymous,
     });
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -189,4 +195,71 @@ async fn rpc_falls_back_to_psk_when_no_assertion_header() {
     assert_eq!(r.status(), reqwest::StatusCode::OK);
     let v: serde_json::Value = r.json().await.unwrap();
     assert!(v.get("error").is_none(), "{v:?}");
+}
+
+#[tokio::test]
+async fn whoami_flags_guest_as_anonymous_when_oidc_and_anonymous_enabled() {
+    let anonymous = AuthContext::new(
+        "anonymous".into(),
+        AclBodyJson {
+            admin: false,
+            allow: AclSideJson {
+                read: vec!["/wiki".into(), "/wiki/*".into()],
+                write: vec![],
+            },
+            deny: AclSideJson {
+                read: vec![],
+                write: vec![],
+            },
+        },
+    );
+    let (base, secret, psk, _dir) = spawn_oidc_server(Some(anonymous)).await;
+    let c = reqwest::Client::new();
+    let guest = c.get(format!("{base}/api/whoami")).send().await.unwrap();
+
+    assert_eq!(guest.status(), reqwest::StatusCode::OK);
+    let guest: serde_json::Value = guest.json().await.unwrap();
+    assert_eq!(guest["anonymous"], true);
+
+    let token = mint_hs256(&secret, &["jwt_role"]);
+    let oidc = c
+        .get(format!("{base}/api/whoami"))
+        .header("X-JWT-Assertion", token)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(oidc.status(), reqwest::StatusCode::OK);
+    let oidc: serde_json::Value = oidc.json().await.unwrap();
+    assert_eq!(oidc["anonymous"], false);
+    assert_eq!(oidc["acl"], "jwt_role");
+
+    let keyed = c
+        .get(format!("{base}/api/whoami"))
+        .header("X-Auth-Key", psk)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(keyed.status(), reqwest::StatusCode::OK);
+    let keyed: serde_json::Value = keyed.json().await.unwrap();
+    assert_eq!(keyed["anonymous"], false);
+
+    let bad_key = c
+        .get(format!("{base}/api/whoami"))
+        .header("X-Auth-Key", "unknown-psk")
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(bad_key.status(), reqwest::StatusCode::UNAUTHORIZED);
+
+    let bad_assertion = c
+        .get(format!("{base}/api/whoami"))
+        .header("X-JWT-Assertion", "not.a.jwt")
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(bad_assertion.status(), reqwest::StatusCode::UNAUTHORIZED);
 }

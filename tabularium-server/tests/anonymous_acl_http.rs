@@ -90,6 +90,7 @@ async fn anonymous_whoami_and_wiki_read() {
     assert_eq!(w.status(), reqwest::StatusCode::OK);
     let who: serde_json::Value = w.json().await.unwrap();
     assert_eq!(who["acl"], "anonymous");
+    assert_eq!(who["anonymous"], true);
     assert_eq!(who["admin"], false);
 
     let r = c
