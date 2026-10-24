@@ -33,7 +33,7 @@ Directory listings and search results are filtered before they are returned.
 ## Introspection
 
 - `GET /api/test` — JSON `{ product_name, product_version, uptime, authenticate_api }`
-- `GET /api/whoami` — JSON `{ acl, admin, permissions }`
+- `GET /api/whoami` — JSON `{ acl, admin, permissions, anonymous }`. `anonymous` is `true` only when the caller resolved to the configured `[anonymous]` principal (no assertion header, no `X-Auth-Key`).
 
 ## Document tree (`/api/doc`)
 

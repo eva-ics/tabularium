@@ -14,7 +14,7 @@ use crate::jwt_assertion::{AssertionRuntime, normalize_groups_from_claim};
 pub(crate) enum RequestAuth {
     /// `[server].authenticate = false` — full access without key; ACL admin APIs open.
     Disabled,
-    /// Valid `X-Auth-Key` mapped to an ACL row.
+    /// Valid `X-Auth-Key` mapped to an ACL row, OIDC groups, or configured `[anonymous]`.
     Authenticated(AuthContext),
 }
 
@@ -43,18 +43,26 @@ pub(crate) fn peek_assertion_header<'a>(
     }
 }
 
-pub(crate) fn extract_x_auth_key(headers: &HeaderMap) -> tabularium::Result<&str> {
+pub(crate) enum AuthKeyHeader<'a> {
+    Absent,
+    EmptyOrBadEncoding,
+    Key(&'a str),
+}
+
+/// Inspect `X-Auth-Key`. Empty / bad encoding is supplied-but-invalid (never falls through to anonymous).
+pub(crate) fn peek_x_auth_key(headers: &HeaderMap) -> AuthKeyHeader<'_> {
     let Some(raw) = headers.get(axum::http::header::HeaderName::from_static("x-auth-key")) else {
-        return Err(Error::Unauthorized("missing X-Auth-Key header".into()));
+        return AuthKeyHeader::Absent;
     };
-    let s = raw
-        .to_str()
-        .map_err(|_| Error::Unauthorized("invalid X-Auth-Key encoding".into()))?;
+    let Ok(s) = raw.to_str() else {
+        return AuthKeyHeader::EmptyOrBadEncoding;
+    };
     let t = s.trim();
     if t.is_empty() {
-        return Err(Error::Unauthorized("empty X-Auth-Key".into()));
+        AuthKeyHeader::EmptyOrBadEncoding
+    } else {
+        AuthKeyHeader::Key(t)
     }
-    Ok(t)
 }
 
 pub(crate) async fn resolve_request_auth(
@@ -62,6 +70,7 @@ pub(crate) async fn resolve_request_auth(
     authenticate: bool,
     headers: &HeaderMap,
     oidc: Option<&AssertionRuntime>,
+    anonymous: Option<&AuthContext>,
 ) -> tabularium::Result<RequestAuth> {
     if !authenticate {
         return Ok(RequestAuth::Disabled);
@@ -99,12 +108,43 @@ pub(crate) async fn resolve_request_auth(
         }
     }
 
-    let key = extract_x_auth_key(headers)?;
-    let ctx = db
-        .resolve_auth_key(key)
-        .await?
-        .ok_or_else(|| Error::Unauthorized("unknown X-Auth-Key".into()))?;
-    Ok(RequestAuth::Authenticated(ctx))
+    match peek_x_auth_key(headers) {
+        AuthKeyHeader::Absent => {
+            if let Some(ctx) = anonymous {
+                return Ok(RequestAuth::Authenticated(ctx.clone()));
+            }
+            Err(Error::Unauthorized("missing X-Auth-Key header".into()))
+        }
+        AuthKeyHeader::EmptyOrBadEncoding => Err(Error::Unauthorized(
+            "empty or invalid X-Auth-Key encoding".into(),
+        )),
+        AuthKeyHeader::Key(key) => {
+            let ctx = db
+                .resolve_auth_key(key)
+                .await?
+                .ok_or_else(|| Error::Unauthorized("unknown X-Auth-Key".into()))?;
+            Ok(RequestAuth::Authenticated(ctx))
+        }
+    }
+}
+
+/// Checks whether a successful [`resolve_request_auth`] used the configured `[anonymous]` principal.
+///
+/// Only that fallback resolves without an assertion header and without `X-Auth-Key`.
+pub(crate) fn is_anonymous_auth(
+    auth: &RequestAuth,
+    headers: &HeaderMap,
+    oidc: Option<&AssertionRuntime>,
+) -> bool {
+    let assertion_absent = oidc.is_none_or(|rt| {
+        matches!(
+            peek_assertion_header(headers, rt.header_name()),
+            AssertionHeader::Absent
+        )
+    });
+    matches!(auth, RequestAuth::Authenticated(_))
+        && assertion_absent
+        && matches!(peek_x_auth_key(headers), AuthKeyHeader::Absent)
 }
 
 /// [`Arc`] wrapper indirection so REST/MCP/WebSocket share the same resolver without borrow fights.
@@ -113,8 +153,16 @@ pub(crate) async fn resolve_request_auth_arc(
     authenticate: bool,
     headers: &HeaderMap,
     oidc: Option<&Arc<AssertionRuntime>>,
+    anonymous: Option<&AuthContext>,
 ) -> tabularium::Result<RequestAuth> {
-    resolve_request_auth(db, authenticate, headers, oidc.map(|a| a.as_ref())).await
+    resolve_request_auth(
+        db,
+        authenticate,
+        headers,
+        oidc.map(|a| a.as_ref()),
+        anonymous,
+    )
+    .await
 }
 
 pub(crate) fn require_mgmt_admin(auth: &RequestAuth) -> tabularium::Result<()> {

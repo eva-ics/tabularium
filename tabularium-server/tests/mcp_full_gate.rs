@@ -27,6 +27,7 @@ async fn test_app() -> (AppState, tempfile::TempDir) {
         authenticate_api: false,
         authenticate_mcp: false,
         oidc: None,
+        anonymous: None,
     };
     (app, dir)
 }

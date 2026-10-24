@@ -30,6 +30,7 @@ async fn spawn_test_server() -> TestServer {
         authenticate_api: false,
         authenticate_mcp: false,
         oidc: None,
+        anonymous: None,
     });
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

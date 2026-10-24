@@ -1,0 +1,68 @@
+services:
+  openobserve:
+    image: public.ecr.aws/zinclabs/openobserve:latest
+    environment:
+      ZO_ROOT_USER_EMAIL: root@example.com
+      ZO_ROOT_USER_PASSWORD: Complexpass#123
+      ZO_DATA_DIR: /data
+    ports:
+      - "5080:5080"
+    volumes:
+      - oo-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:5080/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  tabularium:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: tabularium:otel-e2e
+    depends_on:
+      openobserve:
+        condition: service_healthy
+    environment:
+      OTEL_SERVICE_NAME: tabularium
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://openobserve:5080/api/default/v1/traces
+      OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: http://openobserve:5080/api/default/v1/metrics
+      OTEL_EXPORTER_OTLP_HEADERS: Authorization=Basic cm9vdEBleGFtcGxlLmNvbTpDb21wbGV4cGFzcyMxMjM=
+      RUST_LOG: info,tabularium=debug,tabularium_server=debug
+    ports:
+      - "3050:3050"
+      - "3031:3031"
+    volumes:
+      - ./config.toml:/etc/tabularium/config.toml:ro
+      - tb-data:/var/tabularium/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3050/api/test"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+
+  e2e:
+    image: python:3.12-slim
+    depends_on:
+      tabularium:
+        condition: service_healthy
+      openobserve:
+        condition: service_healthy
+    environment:
+      TABULARIUM_URL: http://tabularium:3050
+      TABULARIUM_MCP_URL: http://tabularium:3031/mcp
+      OPENOBSERVE_URL: http://openobserve:5080
+      OO_USER: root@example.com
+      OO_PASSWORD: Complexpass#123
+      OO_ORG: default
+    volumes:
+      - ./scripts:/scripts:ro
+    working_dir: /scripts
+    command: ["python", "-u", "run_e2e.py"]
+
+volumes:
+  oo-data:
+  tb-data:

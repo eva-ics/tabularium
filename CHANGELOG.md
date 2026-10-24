@@ -4,6 +4,10 @@
 
 ### Added
 
+- Adds optional `[anonymous]` path ACL: when auth is enabled and credentials are
+  absent, requests use a configured non-admin allow/deny principal. Present but
+  invalid PSK/OIDC credentials still fail closed. Web UI opens the public view
+  without a key and offers Login / Logout around PSK sessions.
 - Web UI maps human librarium URLs (`/projects/…/doc.md`) to the entries
   browser instead of sending unknown paths to the library root.
 - Optional OpenAI-compatible embeddings with custom headers and a rebuildable

@@ -6,8 +6,12 @@ export interface TabulariumTrustedAuthValue {
   authenticateApi: boolean;
   /** `[oidc]` on server — Web UI skips PSK gate (proxy supplies JWT assertion). */
   oidcAssertionAuth: boolean;
-  /** Clears cookie + session PSK and returns to the gate when authentication is cleared. */
+  /** No PSK stored; caller uses configured `[anonymous]` path ACL. */
+  anonymousAuth: boolean;
+  /** Clears cookie + session PSK and returns to anonymous (or the gate). */
   logoutPskSession: () => void;
+  /** Open the PSK gate from an anonymous public session. */
+  startPskLogin: () => void;
 }
 
 export const TabulariumTrustedAuthContext =

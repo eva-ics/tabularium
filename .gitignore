@@ -5,6 +5,8 @@ make-deb/dist/
 .DS_Store
 # Local server config (copy from config.toml.example).
 config.toml
+!docker/config.toml
+!e2e/otel/config.toml
 /data/
 .venv/
 *.sqlite

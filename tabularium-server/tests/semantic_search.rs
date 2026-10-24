@@ -74,6 +74,7 @@ async fn semantic_transports_reindex_status_and_fallback() {
         authenticate_api: false,
         authenticate_mcp: false,
         oidc: None,
+        anonymous: None,
     });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());

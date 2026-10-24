@@ -4,7 +4,7 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-use tabularium::{Error, Result};
+use tabularium::{AclBodyJson, Error, Result};
 
 /// Root config file shape (`config.toml`).
 #[derive(Debug, Deserialize)]
@@ -19,6 +19,17 @@ pub struct Config {
     /// Signed assertion from upstream AAA/WAF — JWKS `key` URL/path, validated locally (see meeting `oidc`).
     #[serde(default)]
     pub oidc: Option<OidcSection>,
+    /// Path-scoped principal when auth is on and no credentials are supplied.
+    #[serde(default)]
+    pub anonymous: Option<AnonymousSection>,
+}
+
+/// Optional `[anonymous]` — same allow/deny body as `acl_put`; `admin` must be false.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AnonymousSection {
+    #[serde(flatten)]
+    pub body: AclBodyJson,
 }
 
 fn default_oidc_header() -> String {
@@ -105,6 +116,18 @@ pub struct ServerSection {
 pub fn load(path: &Path) -> Result<Config> {
     let raw = std::fs::read_to_string(path)
         .map_err(|e| Error::Io(format!("config {}: {e}", path.display())))?;
-    toml::from_str(&raw)
-        .map_err(|e| Error::InvalidInput(format!("config {}: {}", path.display(), e.message())))
+    let cfg: Config = toml::from_str(&raw)
+        .map_err(|e| Error::InvalidInput(format!("config {}: {}", path.display(), e.message())))?;
+    if let Some(anon) = cfg.anonymous.as_ref() {
+        if anon.body.admin {
+            return Err(Error::InvalidInput(
+                "config [anonymous]: admin must be false".into(),
+            ));
+        }
+        tabularium::parse_acl_json(
+            &serde_json::to_string(&anon.body)
+                .map_err(|e| Error::InvalidInput(format!("config [anonymous]: {e}")))?,
+        )?;
+    }
+    Ok(cfg)
 }

@@ -1,0 +1,11 @@
+[server]
+listen = "0.0.0.0:3050"
+database_path = "/var/tabularium/data/tabularium.db"
+index_dir = "/var/tabularium/data/tabularium.index"
+workers = 0
+timeout = 60
+authenticate = false
+
+[mcp]
+listen = "0.0.0.0:3031"
+authenticate = false

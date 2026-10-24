@@ -107,6 +107,7 @@ async fn list_root_filtered_when_acl_allows_only_child_path() {
         authenticate_api: true,
         authenticate_mcp: false,
         oidc: None,
+        anonymous: None,
     });
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -157,6 +158,7 @@ async fn list_root_shows_dir_when_acl_allows_only_subtree_glob() {
         authenticate_api: true,
         authenticate_mcp: false,
         oidc: None,
+        anonymous: None,
     });
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -228,6 +230,7 @@ async fn rpc_exists_allows_directory_path_when_acl_is_subtree_glob_only() {
         authenticate_api: true,
         authenticate_mcp: false,
         oidc: None,
+        anonymous: None,
     });
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -291,6 +294,7 @@ async fn bounded_search_omission_flags_do_not_count_denied_documents() {
         authenticate_api: true,
         authenticate_mcp: false,
         oidc: None,
+        anonymous: None,
     });
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

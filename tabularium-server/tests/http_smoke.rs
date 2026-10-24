@@ -20,6 +20,7 @@ async fn rest_root_listing_and_rpc_list_directory() {
         authenticate_api: false,
         authenticate_mcp: false,
         oidc: None,
+        anonymous: None,
     });
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

@@ -22,6 +22,7 @@ import {
   splitPlainTextForPreview,
 } from "./highlightSearchTerms";
 import { gfmTableKatexSanitizeSchema } from "../../markdown/gfmSanitize";
+import { markdownDiagramComponents } from "../../markdown/markdownComponents";
 import {
   markdownRemarkPlugins,
   rehypeKatex,
@@ -31,6 +32,8 @@ import { parentPath } from "./entryModel";
 import { withOpenDocQuery } from "./entriesPath";
 import styles from "./PreviewPane.module.scss";
 import { codePreviewNodes, documentPreviewFormat } from "./documentPreview";
+
+const diagramComponents = markdownDiagramComponents();
 
 const sanitizeWithMark: Schema = {
   ...gfmTableKatexSanitizeSchema,
@@ -228,6 +231,7 @@ export const PreviewPane = forwardRef<HTMLDivElement, PreviewPaneProps>(
 
     const markdownComponents = useMemo(() => {
       return {
+        ...diagramComponents,
         a: ({
           href,
           children,

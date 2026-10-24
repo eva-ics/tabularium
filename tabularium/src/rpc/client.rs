@@ -55,9 +55,13 @@ impl Client {
         extra_headers: HeaderMap,
     ) -> Result<Self> {
         let base = api_uri.into().trim_end_matches('/').to_string();
-        let http = reqwest::Client::builder()
+        let mut builder = reqwest::Client::builder()
             .timeout(timeout)
-            .default_headers(extra_headers.clone())
+            .default_headers(extra_headers.clone());
+        if danger_accept_invalid_certs_enabled() {
+            builder = builder.danger_accept_invalid_certs(true);
+        }
+        let http = builder
             .build()
             .map_err(|e| Error::InvalidInput(e.to_string()))?;
         Ok(Self {
@@ -974,18 +978,22 @@ pub struct WcMetrics {
 }
 
 impl WcMetrics {
+    /// Returns the byte count when present.
     pub fn bytes(&self) -> Option<u64> {
         self.bytes
     }
 
+    /// Returns the line count when present.
     pub fn lines(&self) -> Option<usize> {
         self.lines
     }
 
+    /// Returns the word count when present.
     pub fn words(&self) -> Option<usize> {
         self.words
     }
 
+    /// Returns the character count when present.
     pub fn chars(&self) -> Option<usize> {
         self.chars
     }
@@ -1000,10 +1008,12 @@ pub struct WcFileEntry {
 }
 
 impl WcFileEntry {
+    /// Returns the absolute document path for this row.
     pub fn path(&self) -> &str {
         &self.path
     }
 
+    /// Returns the filtered metrics for this file.
     pub fn metrics(&self) -> &WcMetrics {
         &self.metrics
     }
@@ -1027,18 +1037,22 @@ pub struct WcResponse {
 }
 
 impl WcResponse {
+    /// Indicates whether this response carries a multi-file `files`/`total` shape.
     pub fn is_batch(&self) -> bool {
         self.files.is_some()
     }
 
+    /// Returns per-file rows when this is a batch response.
     pub fn files(&self) -> Option<&[WcFileEntry]> {
         self.files.as_deref()
     }
 
+    /// Returns the batch total when present.
     pub fn total(&self) -> Option<&WcMetrics> {
         self.total.as_ref()
     }
 
+    /// Returns top-level metrics for a single-file response shape.
     pub fn single_metrics(&self) -> WcMetrics {
         WcMetrics {
             bytes: self.bytes,
@@ -1310,6 +1324,22 @@ impl DocumentBody {
     }
 }
 
+/// Same contract as `OTEL_SDK_DISABLED` in the server: only `1` / `true` (trimmed) enable the danger path.
+fn danger_accept_invalid_certs_enabled() -> bool {
+    danger_accept_invalid_certs_value(
+        std::env::var("TB_DANGER_ACCEPT_INVALID_CERTS")
+            .ok()
+            .as_deref(),
+    )
+}
+
+fn danger_accept_invalid_certs_value(raw: Option<&str>) -> bool {
+    matches!(
+        raw.map(str::trim).filter(|s| !s.is_empty()),
+        Some("true" | "1" | "TRUE" | "True")
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1317,5 +1347,17 @@ mod tests {
     #[test]
     fn client_init_accepts_https_base() {
         Client::init("https://127.0.0.1:9", Duration::from_secs(1)).unwrap();
+    }
+
+    #[test]
+    fn danger_accept_invalid_certs_reads_value_not_presence() {
+        assert!(!danger_accept_invalid_certs_value(None));
+        assert!(!danger_accept_invalid_certs_value(Some("")));
+        assert!(!danger_accept_invalid_certs_value(Some("   ")));
+        assert!(!danger_accept_invalid_certs_value(Some("false")));
+        assert!(!danger_accept_invalid_certs_value(Some("0")));
+        assert!(danger_accept_invalid_certs_value(Some("true")));
+        assert!(danger_accept_invalid_certs_value(Some("1")));
+        assert!(danger_accept_invalid_certs_value(Some(" TRUE ")));
     }
 }

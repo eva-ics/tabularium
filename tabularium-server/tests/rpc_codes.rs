@@ -24,6 +24,7 @@ async fn unknown_rpc_method_returns_minus_32601() {
         authenticate_api: false,
         authenticate_mcp: false,
         oidc: None,
+        anonymous: None,
     });
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -72,6 +73,7 @@ async fn invalid_rpc_params_return_minus_32602() {
         authenticate_api: false,
         authenticate_mcp: false,
         oidc: None,
+        anonymous: None,
     });
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -115,6 +117,7 @@ async fn rpc_duplicate_create_document_returns_duplicate_resource_code() {
         authenticate_api: false,
         authenticate_mcp: false,
         oidc: None,
+        anonymous: None,
     });
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

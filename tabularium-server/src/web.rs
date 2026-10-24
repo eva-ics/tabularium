@@ -15,10 +15,11 @@ use tracing::info;
 
 use crate::auth::{
     RequestAuth, check_read, check_search_directory_traverse, check_write,
-    directory_listing_requires_parent_readable, filter_listed_children, require_mgmt_admin,
-    resolve_request_auth_arc, whoami_json,
+    directory_listing_requires_parent_readable, filter_listed_children, is_anonymous_auth,
+    require_mgmt_admin, resolve_request_auth_arc, whoami_json,
 };
 use crate::jwt_assertion::AssertionRuntime;
+use crate::otel;
 use crate::test_payload::test_payload;
 use crate::ws_doc::ws_upgrade;
 use tabularium::jsonrpc_codes::{FORBIDDEN, UNAUTHORIZED};
@@ -98,6 +99,8 @@ pub struct AppState {
     pub authenticate_mcp: bool,
     /// Optional `[oidc]` upstream JWT assertion verifier (JWKS).
     pub oidc: Option<Arc<AssertionRuntime>>,
+    /// Optional `[anonymous]` path-scoped principal when credentials are absent.
+    pub anonymous: Option<tabularium::AuthContext>,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -136,16 +139,28 @@ async fn api_test(State(st): State<AppState>) -> ApiResult<Json<Value>> {
 
 async fn api_whoami(State(st): State<AppState>, headers: HeaderMap) -> ApiResult<Json<Value>> {
     let auth = api_resolve_auth(&st, &headers).await?;
-    Ok(Json(whoami_json(&auth)))
+    let anonymous = is_anonymous_auth(&auth, &headers, st.oidc.as_deref());
+    let mut body = whoami_json(&auth);
+    // The Web UI tells a guest session apart from an upstream OIDC assertion by this flag.
+    if let Value::Object(map) = &mut body {
+        map.insert("anonymous".into(), Value::Bool(anonymous));
+    }
+    Ok(Json(body))
 }
 
 async fn api_resolve_auth(st: &AppState, headers: &HeaderMap) -> Result<RequestAuth, ApiError> {
     Ok(if !st.authenticate_api {
         RequestAuth::Disabled
     } else {
-        resolve_request_auth_arc(st.db.as_ref(), true, headers, st.oidc.as_ref())
-            .await
-            .map_err(ApiError)?
+        resolve_request_auth_arc(
+            st.db.as_ref(),
+            true,
+            headers,
+            st.oidc.as_ref(),
+            st.anonymous.as_ref(),
+        )
+        .await
+        .map_err(ApiError)?
     })
 }
 
@@ -473,7 +488,10 @@ async fn get_or_list(
                     .await?
                 {
                     DocumentWaitStatus::Changed => Ok(StatusCode::NO_CONTENT.into_response()),
-                    DocumentWaitStatus::TimedOut => Ok(StatusCode::GATEWAY_TIMEOUT.into_response()),
+                    DocumentWaitStatus::TimedOut => {
+                        otel::record_wait_timeout();
+                        Ok(StatusCode::GATEWAY_TIMEOUT.into_response())
+                    }
                 };
             }
             let (meta, body) = st.db.cat_document_bundle(fid).await?;
@@ -865,8 +883,10 @@ async fn rpc_dispatch(State(st): State<AppState>, headers: HeaderMap, body: Byte
     if req.jsonrpc != "2.0" {
         return Json(rpc_error(req.id, -32600, "invalid jsonrpc version"));
     }
+    // Explicit root: param previews must not attach to Axum/OTLP parent spans.
     info!(
         target: "tabularium_server::rpc",
+        parent: None,
         transport = "http",
         method = %req.method,
         params = %crate::rpc_preview::format_rpc_params_preview(req.params.as_ref()),
@@ -878,7 +898,14 @@ async fn rpc_dispatch(State(st): State<AppState>, headers: HeaderMap, body: Byte
         // The uptime endpoint remains callable without authentication for health checks.
         Ok(RequestAuth::Disabled)
     } else {
-        resolve_request_auth_arc(st.db.as_ref(), true, &headers, st.oidc.as_ref()).await
+        resolve_request_auth_arc(
+            st.db.as_ref(),
+            true,
+            &headers,
+            st.oidc.as_ref(),
+            st.anonymous.as_ref(),
+        )
+        .await
     };
     let auth = match auth_result {
         Ok(a) => a,
@@ -1413,9 +1440,12 @@ pub(crate) async fn dispatch_app_rpc(
                 .await?
             {
                 DocumentWaitStatus::Changed => Ok(Value::Null),
-                DocumentWaitStatus::TimedOut => Err(RpcAppError::Other(Error::InvalidInput(
-                    "wait timed out".into(),
-                ))),
+                DocumentWaitStatus::TimedOut => {
+                    otel::record_wait_timeout();
+                    Err(RpcAppError::Other(Error::InvalidInput(
+                        "wait timed out".into(),
+                    )))
+                }
             }
         }
         "get_document_ref" => {

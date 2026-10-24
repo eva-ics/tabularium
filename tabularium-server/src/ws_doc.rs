@@ -74,7 +74,15 @@ pub async fn ws_upgrade(
     let auth: RequestAuth = if !st.authenticate_api {
         RequestAuth::Disabled
     } else {
-        match resolve_request_auth_arc(st.db.as_ref(), true, &headers, st.oidc.as_ref()).await {
+        match resolve_request_auth_arc(
+            st.db.as_ref(),
+            true,
+            &headers,
+            st.oidc.as_ref(),
+            st.anonymous.as_ref(),
+        )
+        .await
+        {
             Ok(a) => a,
             Err(e) => {
                 return (StatusCode::UNAUTHORIZED, e.to_string()).into_response();
