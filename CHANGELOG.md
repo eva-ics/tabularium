@@ -2,27 +2,37 @@
 
 ## Unreleased
 
-- Adds deterministic relevance/modified-descending search ordering and exclusive
-  UNIX-nanosecond modification bounds across REST/RPC/MCP/CLI and Web UI.
-- Filters authorized candidates before top-k selection; no source schema migration.
-- Adds CI regressions for time bounds, tie ordering, transports and semantic
-  retrieval/exact-source contracts using an offline embeddings fixture.
+### Added
 
-- Adds bounded, versioned search with limit, JSON byte budget, explicit omission
-  flags, exact excerpts, revision and modification time across RPC/REST/MCP/CLI.
-- Adds revision-checked slice reads and CLI structured search output.
-- Adds plain-text previews for .txt/.list and removes themed interface/help copy.
+- Optional OpenAI-compatible embeddings with custom headers and a rebuildable
+  semantic sidecar; lexical, semantic and hybrid search/reindex modes across
+  REST, JSON-RPC, MCP, CLI and Web UI.
+- Bounded search responses with result limits, JSON byte budgets, explicit
+  omission flags, exact excerpts, source revisions and modification times.
+- Exclusive UNIX-nanosecond modification bounds and deterministic relevance or
+  modification-time ordering across all search interfaces.
+- Revision-checked slice reads and structured CLI search output.
+- Per-document JSON metadata with revision-checked REST, JSON-RPC and MCP APIs,
+  `tb meta` viewing/editing, and import/export sidecars. Metadata is included in
+  lexical search and preserved by body edits, copies and moves.
+- Read-only metadata preview with a Meta/File toggle in the Web UI.
 
-- Adds a Web UI search-kind selector and source-preserving JSON/shell previews
-  with stored MIME precedence, extension fallback, and Markdown default.
+### Improved
 
-- Adds optional OpenAI-compatible embeddings with custom headers and a rebuildable
-  semantic sidecar, without changing the document database schema.
-- Adds `lexical`, `semantic`, and default `hybrid` search/reindex modes across
-  CLI, REST, JSON-RPC, and MCP, with rank fusion and explicit engine status.
-- Keeps semantic excerpts tied to current source revisions and exact line ranges;
-  persistent background refresh handles writes, moves, and deletions.
-- Moves the integration host to `10.90.1.102` and stabilizes Selenium focus helpers.
+- Search filters authorized candidates before top-k selection. Semantic excerpts
+  remain tied to current source revisions and exact line ranges; background
+  refresh handles writes, moves and deletions.
+- MIME-aware JSON and shell previews, plain-text previews for `.txt` and `.list`,
+  a search-kind selector, and mobile access to the copy-path button.
+- Neutral interface/help wording, Selenium focus handling, and regression
+  coverage for search bounds, ordering, transports and offline semantic retrieval.
+
+### Upgrade notes
+
+- JSON metadata adds an automatically migrated SQLite column with an empty-object
+  default; existing document bodies, IDs, revisions and ACLs are preserved.
+- Search enhancements do not require a document database migration. The semantic
+  sidecar is rebuildable; the Tantivy schema is unchanged.
 
 ## 0.1.7 - 2026-05-11
 
@@ -33,7 +43,7 @@ Authentication, concurrency, and operator tooling release.
   admin `acl_*` / `psk_*` workflows, and filtered list/search results.
 - Adds trusted upstream assertion support via `[oidc]` with local JWK/JWKS
   verification and refresh, so deployments can accept proxy-minted JWT
-  assertions without treating hope as a security boundary.
+  assertions with locally verified signatures.
 - Adds file `revision` UUIDs to file metadata and compare-and-swap writes via
   `only_if_revision` on `put_document` and `create_document`, exposing
   revision tokens through file reads and metadata APIs.
@@ -76,7 +86,7 @@ Web UI and packaging release.
 
 - Improves the embedded Web UI with screenshots, styling and workspace flow fixes, plus better reference handling coverage.
 - Adds Homebrew installation support, server `--config`, `mkdir -p`, and related path and release-target packaging fixes.
-- Docker images
+- Adds published Docker images.
 
 ## 0.1.3 - 2026-04-06
 
