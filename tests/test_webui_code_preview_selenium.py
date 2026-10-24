@@ -78,3 +78,30 @@ def test_preview_mime_precedence_and_markdown_default(selenium_driver, tabulariu
     else:
         code = wait.until(lambda d: d.find_element(By.CSS_SELECTOR, "[data-testid='preview-code']"))
         assert code.get_attribute("data-language") == expected
+
+
+@pytest.mark.parametrize("width", [1280, 390])
+def test_metadata_readonly_and_full_preview_path(selenium_driver, tabularium_base_url, width):
+    from tests.helpers import _rpc
+    d = selenium_driver
+    d.set_window_size(width, 900)
+    name = "long-document-path-that-must-wrap-without-truncation-example.md"
+    wait = open_preview(d, tabularium_base_url, name, "# Body stays separate")
+    title = wait.until(lambda d: d.find_element(By.CSS_SELECTOR, "[data-testid='preview-path']"))
+    path = title.get_attribute("textContent")
+    metadata = {"status": "draft", "tags": ["previewtest"], "unsafe": "<img src=x onerror=alert(1)>"}
+    assert "result" in _rpc("set_document_metadata", {"path": path, "metadata": metadata})
+    d.find_element(By.CSS_SELECTOR, "[data-testid='preview-meta']").click()
+    panel = wait.until(lambda d: d.find_element(By.CSS_SELECTOR, "[data-testid='preview-metadata'] pre"))
+    import json
+    assert json.loads(panel.get_attribute("textContent")) == metadata
+    assert not panel.find_elements(By.CSS_SELECTOR, "textarea, input, img, script")
+    assert not d.find_element(By.CSS_SELECTOR, "[data-testid='preview-edit']").is_enabled()
+    assert d.execute_script("return getComputedStyle(arguments[0]).whiteSpace", title) != "nowrap"
+    assert d.execute_script("return arguments[0].scrollWidth <= arguments[0].clientWidth + 1", title)
+    actions = d.find_element(By.CSS_SELECTOR, "[data-testid='preview-actions']")
+    assert actions.rect["y"] >= title.rect["y"] + title.rect["height"]
+    assert d.execute_script("return arguments[0].scrollWidth <= arguments[0].clientWidth + 1", actions)
+    d.find_element(By.CSS_SELECTOR, "[data-testid='preview-meta']").click()
+    wait.until(lambda d: d.find_element(By.CSS_SELECTOR, "[data-testid='preview-pane'] h1"))
+    d.set_window_size(1280, 900)

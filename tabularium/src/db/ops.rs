@@ -520,6 +520,8 @@ impl<S: Storage> Database<S> {
             let body = self.get_document(fid).await?;
             self.put_document_by_path(&dst_file, &body, true, None)
                 .await?;
+            self.set_document_metadata(&dst_file, &self.storage.file_metadata(fid).await?, None)
+                .await?;
             return Ok(());
         }
 
@@ -573,6 +575,12 @@ impl<S: Storage> Database<S> {
                     let body = self.get_document(fid).await?;
                     self.put_document_by_path(&dst_child, &body, true, None)
                         .await?;
+                    self.set_document_metadata(
+                        &dst_child,
+                        &self.storage.file_metadata(fid).await?,
+                        None,
+                    )
+                    .await?;
                 }
             }
         }

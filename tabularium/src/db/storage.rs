@@ -10,6 +10,15 @@ use crate::{Result, Timestamp};
 /// Async persistence for the hierarchical `entries` table (`sqlx` today, another engine tomorrow).
 #[async_trait]
 pub trait Storage: Send + Sync {
+    /// Arbitrary JSON object, stored independently of document content.
+    async fn file_metadata(&self, file_id: EntryId) -> Result<serde_json::Value>;
+    async fn set_file_metadata(
+        &self,
+        file_id: EntryId,
+        metadata: &str,
+        expected_revision: Option<&str>,
+    ) -> Result<()>;
+
     /// Updates only `accessed_at` for a file row.
     async fn touch(&self, file_id: EntryId) -> Result<()>;
 

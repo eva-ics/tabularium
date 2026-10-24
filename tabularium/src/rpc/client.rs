@@ -303,6 +303,28 @@ impl Client {
         serde_json::from_value(r).map_err(|e| Error::InvalidInput(e.to_string()))
     }
 
+    /// Read JSON metadata and its shared document revision.
+    pub async fn get_document_metadata(&self, path: impl AsRef<Path>) -> Result<Value> {
+        let path = normalize_path_for_rpc(path)?;
+        self.call("get_document_metadata", json!({"path":path}))
+            .await
+    }
+
+    pub async fn set_document_metadata(
+        &self,
+        path: impl AsRef<Path>,
+        metadata: &Value,
+        only_if_revision: Option<&str>,
+    ) -> Result<()> {
+        let path = normalize_path_for_rpc(path)?;
+        self.call(
+            "set_document_metadata",
+            json!({"path":path,"metadata":metadata,"only_if_revision":only_if_revision}),
+        )
+        .await?;
+        Ok(())
+    }
+
     /// `create_directory` RPC; `path` is absolute (e.g. `/notes`). `parents` matches POSIX `mkdir -p`.
     pub async fn create_directory(
         &self,

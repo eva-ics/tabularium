@@ -13,8 +13,8 @@
 
 .header {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  align-items: stretch;
   gap: 0.5rem;
   padding: 0.5rem 0.75rem;
   border-bottom: 1px solid $border;
@@ -34,8 +34,8 @@
 .headerTitle {
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .copyPath {
@@ -72,6 +72,7 @@
 
 .headerActions {
   display: flex;
+  flex-wrap: wrap;
   flex-shrink: 0;
   align-items: center;
   gap: 0.35rem;
@@ -691,4 +692,9 @@
   :global(.hljs-keyword), :global(.hljs-built_in) { color: #c678dd; }
   :global(.hljs-attr), :global(.hljs-variable) { color: #61afef; }
   :global(.hljs-meta) { color: $accent; }
+}
+
+.metadataJson {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }

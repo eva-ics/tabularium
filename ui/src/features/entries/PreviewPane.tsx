@@ -13,7 +13,7 @@ import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 import type { Schema } from "hast-util-sanitize";
 import { useNavigate } from "react-router-dom";
-import { getDocument, putDocument } from "../../api/client";
+import { getDocument, putDocument, rpcCall } from "../../api/client";
 import { DocumentChatBody } from "../chat/DocumentChatBody";
 import {
   extractSearchHighlightTerms,
@@ -93,6 +93,21 @@ export const PreviewPane = forwardRef<HTMLDivElement, PreviewPaneProps>(
     const navigate = useNavigate();
     const editorRef = useRef<HTMLTextAreaElement>(null);
     const [rawMode, setRawMode] = useState(false);
+    const [metaMode, setMetaMode] = useState(false);
+    const [metadata, setMetadata] = useState<string | null>(null);
+    const [metadataError, setMetadataError] = useState<string | null>(null);
+    useEffect(() => { setMetaMode(false); }, [pathLabel]);
+    useEffect(() => {
+      let active = true;
+      setMetadata(null);
+      setMetadataError(null);
+      if (metaMode && pathLabel) {
+        void rpcCall<{ metadata: Record<string, unknown> }>("get_document_metadata", {path: pathLabel})
+          .then((value) => { if (active) setMetadata(JSON.stringify(value.metadata, null, 2)); })
+          .catch((e: unknown) => { if (active) setMetadataError(String(e)); });
+      }
+      return () => { active = false; };
+    }, [metaMode, pathLabel]);
     const [editMode, setEditMode] = useState(false);
     const [draft, setDraft] = useState("");
     const [baseline, setBaseline] = useState("");
@@ -348,9 +363,9 @@ export const PreviewPane = forwardRef<HTMLDivElement, PreviewPaneProps>(
     }, [documentSurface, onDocumentSurfaceChange, onRequestDocumentReload]);
 
     const showPreviewBody =
-      documentSurface === "preview" && !editMode && showDoc;
+      documentSurface === "preview" && !editMode && !metaMode && showDoc;
     const showChatBody =
-      documentSurface === "chat" && !editMode && pathLabel != null;
+      documentSurface === "chat" && !editMode && !metaMode && pathLabel != null;
 
     return (
       <section
@@ -360,7 +375,7 @@ export const PreviewPane = forwardRef<HTMLDivElement, PreviewPaneProps>(
       >
         <div className={styles.header}>
           <span className={styles.headerLeft}>
-            <span className={styles.headerTitle}>
+            <span className={styles.headerTitle} data-testid="preview-path" title={pathLabel ?? undefined}>
               {pathLabel ? pathLabel : "Preview"}
             </span>
             {pathLabel ? (
@@ -380,7 +395,12 @@ export const PreviewPane = forwardRef<HTMLDivElement, PreviewPaneProps>(
             ) : null}
           </span>
           {showRawToggle || showChatToggle || editMode ? (
-            <div className={styles.headerActions}>
+            <div className={styles.headerActions} data-testid="preview-actions">
+              {pathLabel && !editMode ? (
+                <button type="button" className={styles.rawToggle} data-testid="preview-meta"
+                  aria-pressed={metaMode} disabled={loading}
+                  onClick={() => setMetaMode((value) => !value)}>{metaMode ? "Back" : "Meta"}</button>
+              ) : null}
               {showFullscreenToggle ? (
                 <button
                   type="button"
@@ -402,6 +422,7 @@ export const PreviewPane = forwardRef<HTMLDivElement, PreviewPaneProps>(
                   disabled={editMode || loading}
                   onClick={() => {
                     onRequestDocumentReload?.();
+                    setMetaMode(false);
                     setRawMode((r) => !r);
                   }}
                 >
@@ -414,7 +435,7 @@ export const PreviewPane = forwardRef<HTMLDivElement, PreviewPaneProps>(
                   className={styles.chatToggle}
                   data-testid="preview-chat"
                   disabled={editLoading}
-                  onClick={toggleChatSurface}
+                  onClick={() => { setMetaMode(false); toggleChatSurface(); }}
                 >
                   {documentSurface === "chat" ? "Preview" : "Chat"}
                 </button>
@@ -447,8 +468,10 @@ export const PreviewPane = forwardRef<HTMLDivElement, PreviewPaneProps>(
                   type="button"
                   className={styles.editSave}
                   data-testid="preview-edit"
-                  disabled={editLoading}
+                  title="Edit document body"
+                  disabled={editLoading || metaMode}
                   onClick={() => {
+                    setMetaMode(false);
                     void startEdit();
                   }}
                 >
@@ -463,6 +486,12 @@ export const PreviewPane = forwardRef<HTMLDivElement, PreviewPaneProps>(
           className={`${styles.body} ${editMode ? styles.bodyEditing : ""} ${showChatBody ? styles.bodyChat : ""}`}
           tabIndex={-1}
         >
+          {metaMode ? (
+            <div data-testid="preview-metadata" aria-label="Read-only document metadata">
+              {metadataError ? <p className={styles.err}>{metadataError}</p> :
+                metadata === null ? <p>Loading metadata…</p> : <pre className={styles.metadataJson}>{metadata}</pre>}
+            </div>
+          ) : null}
           {error ? <p className={styles.err}>{error}</p> : null}
           {editPrepareError && !editMode ? (
             <p className={styles.saveErr} data-testid="preview-edit-load-error">

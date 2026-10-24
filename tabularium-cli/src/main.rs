@@ -143,6 +143,16 @@ pub(crate) enum Command {
     Ec { path: String },
     /// Edit document in `$EDITOR` (`DIR/FILE`).
     Edit { path: String },
+    /// JSON metadata: show by default, or --import FILE, --export FILE, --edit ($EDITOR).
+    Meta {
+        path: String,
+        #[arg(long, conflicts_with_all = ["export", "edit"])]
+        import: Option<std::path::PathBuf>,
+        #[arg(long, conflicts_with = "edit")]
+        export: Option<std::path::PathBuf>,
+        #[arg(long)]
+        edit: bool,
+    },
     /// Export documents to the filesystem (recursive subtree).
     Export {
         /// `/` for the whole tree, or one directory path to export.

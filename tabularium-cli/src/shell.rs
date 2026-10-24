@@ -1462,6 +1462,17 @@ pub(crate) fn apply_shell_cwd(cmd: Command, shell_cwd: Option<&str>) -> Result<C
         Command::Wc { path } => Command::Wc {
             path: resolve_shell_doc_path(&path, shell_cwd)?,
         },
+        Command::Meta {
+            path,
+            import,
+            export,
+            edit,
+        } => Command::Meta {
+            path: resolve_shell_doc_path(&path, shell_cwd)?,
+            import,
+            export,
+            edit,
+        },
         Command::Edit { path } => Command::Edit {
             path: resolve_shell_doc_path(&path, shell_cwd)?,
         },

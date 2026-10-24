@@ -46,7 +46,7 @@ jobs:
             sleep 1
           done
           # No Selenium here: browser tests only run on the dedicated integration host.
-          python -m pytest tests/test_search_options.py tests/test_search_bounded.py -v
+          python -m pytest tests/test_search_options.py tests/test_search_bounded.py tests/test_metadata.py -v
   fmt:
     runs-on: ubuntu-latest
     steps:

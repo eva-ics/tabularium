@@ -142,9 +142,26 @@ async fn ensure_acl_tables(pool: &SqlitePool) -> Result<()> {
     Ok(())
 }
 
+/// Serialize the check and ALTER across simultaneous server starts. Never ignore DDL errors.
+async fn ensure_metadata_column(pool: &SqlitePool) -> Result<()> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let n: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('entries') WHERE name = 'metadata_json'",
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    if n == 0 {
+        sqlx::query("ALTER TABLE entries ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(metadata_json) AND json_type(metadata_json) = 'object')")
+            .execute(&mut *tx).await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
 async fn migrate(pool: &SqlitePool) -> Result<()> {
     if table_exists(pool, "entries").await? {
         ensure_revision_column(pool).await?;
+        ensure_metadata_column(pool).await?;
         ensure_acl_tables(pool).await?;
         ensure_access_keys_named_schema(pool).await?;
         return Ok(());
@@ -156,6 +173,7 @@ async fn migrate(pool: &SqlitePool) -> Result<()> {
     kind INTEGER NOT NULL,
     name TEXT NOT NULL,
     description TEXT,
+    metadata_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(metadata_json) AND json_type(metadata_json) = 'object'),
     mime_type TEXT DEFAULT NULL,
     content TEXT,
     size INTEGER,
@@ -505,6 +523,32 @@ enum MkdirParentsScan {
 
 #[async_trait]
 impl Storage for SqliteStorage {
+    async fn file_metadata(&self, file_id: EntryId) -> Result<serde_json::Value> {
+        let raw: Option<String> =
+            sqlx::query_scalar("SELECT metadata_json FROM entries WHERE id = ? AND kind = 1")
+                .bind(file_id.raw())
+                .fetch_optional(&self.pool)
+                .await?;
+        let raw = raw.ok_or_else(|| Error::NotFound(format!("file {}", file_id.raw())))?;
+        serde_json::from_str(&raw).map_err(|e| Error::InvalidInput(format!("stored metadata: {e}")))
+    }
+
+    async fn set_file_metadata(
+        &self,
+        file_id: EntryId,
+        metadata: &str,
+        expected_revision: Option<&str>,
+    ) -> Result<()> {
+        let result = sqlx::query("UPDATE entries SET metadata_json = ?, modified_at = ?, revision = ? WHERE id = ? AND kind = 1 AND (? IS NULL OR revision = ?)")
+            .bind(metadata).bind(Timestamp::now()).bind(new_file_revision()).bind(file_id.raw())
+            .bind(expected_revision).bind(expected_revision).execute(&self.pool).await?;
+        if result.rows_affected() == 0 {
+            self.get_file_meta(file_id).await?;
+            return Err(Error::RevisionMismatch(format!("file {}", file_id.raw())));
+        }
+        Ok(())
+    }
+
     #[instrument(skip(self), fields(file_id = file_id.raw()), err(Debug))]
     async fn touch(&self, file_id: EntryId) -> Result<()> {
         let now = Timestamp::now();
@@ -1088,7 +1132,7 @@ impl Storage for SqliteStorage {
             let id = EntryId::from_raw(raw);
             let parent = self.parent_dir_path_for_file(id).await?;
             let row = sqlx::query(
-                "SELECT name, description, content FROM entries WHERE id = ? AND kind = 1",
+                "SELECT name, trim(coalesce(description, '') || ' ' || metadata_json), content FROM entries WHERE id = ? AND kind = 1",
             )
             .bind(raw)
             .fetch_one(&self.pool)
@@ -1107,7 +1151,7 @@ impl Storage for SqliteStorage {
     ) -> Result<(String, String, String, String)> {
         let dp = self.parent_dir_path_for_file(file_id).await?;
         let row =
-            sqlx::query("SELECT name, description, content FROM entries WHERE id = ? AND kind = 1")
+            sqlx::query("SELECT name, trim(coalesce(description, '') || ' ' || metadata_json), content FROM entries WHERE id = ? AND kind = 1")
                 .bind(file_id.raw())
                 .fetch_optional(&self.pool)
                 .await?;
@@ -1254,6 +1298,43 @@ impl Storage for SqliteStorage {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn metadata_upgrade_preserves_legacy_rows_and_is_repeatable() {
+        let dir = tempfile::tempdir().unwrap();
+        let uri = format!("sqlite://{}", dir.path().join("legacy.db").display());
+        let storage = super::SqliteStorage::connect(&uri).await.unwrap();
+        use crate::db::Storage;
+        let id = storage
+            .create_file("/legacy.md", "untouched body")
+            .await
+            .unwrap();
+        let before = storage.get_file_meta(id).await.unwrap();
+        sqlx::query("ALTER TABLE entries DROP COLUMN metadata_json")
+            .execute(&storage.pool)
+            .await
+            .unwrap();
+        super::migrate(&storage.pool).await.unwrap();
+        super::migrate(&storage.pool).await.unwrap();
+        assert_eq!(
+            storage.file_metadata(id).await.unwrap(),
+            serde_json::json!({})
+        );
+        assert_eq!(
+            storage.get_file_content(id).await.unwrap(),
+            "untouched body"
+        );
+        let after = storage.get_file_meta(id).await.unwrap();
+        assert_eq!(before.revision(), after.revision());
+        assert_eq!(before.modified_at(), after.modified_at());
+        assert!(
+            sqlx::query("UPDATE entries SET metadata_json = '[]' WHERE id = ?")
+                .bind(id.raw())
+                .execute(&storage.pool)
+                .await
+                .is_err()
+        );
+    }
+
     use super::*;
 
     #[tokio::test]

@@ -275,6 +275,41 @@ impl<S: Storage> Database<S> {
             .await
     }
 
+    /// Metadata keys and values participate in lexical search, but not semantic embeddings.
+    pub async fn document_metadata(&self, path: &str) -> Result<serde_json::Value> {
+        let id = self.resolve_file_path(path).await?;
+        let value = self.storage.file_metadata(id).await?;
+        self.storage.touch(id).await?;
+        Ok(value)
+    }
+
+    /// Full replacement with optional optimistic concurrency, same revision as the body.
+    pub async fn set_document_metadata(
+        &self,
+        path: &str,
+        metadata: &serde_json::Value,
+        expected_revision: Option<&str>,
+    ) -> Result<()> {
+        if !metadata.is_object() {
+            return Err(Error::InvalidInput("metadata must be a JSON object".into()));
+        }
+        let raw =
+            serde_json::to_string(metadata).map_err(|e| Error::InvalidInput(e.to_string()))?;
+        if raw.len() > 65536 {
+            return Err(Error::InvalidInput(
+                "metadata exceeds 65536 UTF-8 bytes".into(),
+            ));
+        }
+        let id = self.resolve_file_path(path).await?;
+        self.storage
+            .set_file_metadata(id, &raw, expected_revision)
+            .await?;
+        self.cache.invalidate(&id).await;
+        self.reindex_file_in_search(id).await?;
+        self.bump_doc_wait(id);
+        Ok(())
+    }
+
     #[instrument(skip(self), fields(path = %path.as_ref()), err(Debug))]
     pub async fn entry_description(&self, path: impl AsRef<str> + Send) -> Result<Option<String>> {
         let path = path.as_ref();
@@ -642,6 +677,52 @@ mod deep_path_tests;
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn metadata_search_revision_validation_and_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let uri = format!("sqlite://{}", dir.path().join("meta.db").display());
+        let db = super::SqliteDatabase::init(&uri, dir.path().join("idx"), 8)
+            .await
+            .unwrap();
+        let id = db
+            .create_file_in_directory("/", "one.md", "original body")
+            .await
+            .unwrap();
+        let before = db.get_document_meta(id).await.unwrap();
+        let value = serde_json::json!({"uniquelexicalkey":"metaneedle", "nested":{"number":42,"enabled":true},"tags":["one","two"]});
+        db.set_document_metadata("/one.md", &value, before.revision())
+            .await
+            .unwrap();
+        assert_eq!(db.document_metadata("/one.md").await.unwrap(), value);
+        assert_eq!(db.get_document(id).await.unwrap(), "original body");
+        assert_eq!(db.search("metaneedle", None).await.unwrap(), vec![id]);
+        assert_eq!(db.search("uniquelexicalkey", None).await.unwrap(), vec![id]);
+        assert!(matches!(
+            db.set_document_metadata("/one.md", &serde_json::json!({}), before.revision())
+                .await,
+            Err(crate::Error::RevisionMismatch(_))
+        ));
+        for bad in [
+            serde_json::json!([]),
+            serde_json::json!(null),
+            serde_json::json!({"large":"x".repeat(65536)}),
+        ] {
+            assert!(
+                db.set_document_metadata("/one.md", &bad, None)
+                    .await
+                    .is_err()
+            );
+        }
+        db.cp("/one.md", "/two.md", false).await.unwrap();
+        assert_eq!(db.document_metadata("/two.md").await.unwrap(), value);
+        db.reindex(None).await.unwrap();
+        assert_eq!(db.search("metaneedle", None).await.unwrap().len(), 2);
+        db.set_document_metadata("/one.md", &serde_json::json!({}), None)
+            .await
+            .unwrap();
+        assert!(!db.search("metaneedle", None).await.unwrap().contains(&id));
+    }
+
     use super::*;
 
     #[tokio::test]

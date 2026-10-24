@@ -27,6 +27,14 @@ use tracing::info;
 use crate::auth::{RequestAuth, resolve_request_auth_arc};
 use crate::web::{AppState, RpcAppError, dispatch_app_rpc};
 
+#[derive(Debug, Deserialize, JsonSchema)]
+struct MetadataArg {
+    path: String,
+    metadata: Value,
+    #[serde(default)]
+    only_if_revision: Option<String>,
+}
+
 const MCP_HELP_BASE: &str = include_str!("../res/mcp/help.txt");
 
 const TOOL_NAMES_LINE: &str = "Call tool `methods` for the live catalog; the registered set depends on config `mcp.full` (destructive tools, ACL/PSK admin tools, and `whoami` are omitted unless full mode is enabled).";
@@ -82,6 +90,8 @@ Auth: when **`[server].authenticate = true`**, attach **`X-Auth-Key: <psk>`** on
 
 Doctrine: **list_directory** (repeated) = tree walk / "find by listing" — locate entries by path and name; **search** = hybrid lexical/semantic search across document bodies; **grep** = regex lines in one file only.
 
+get_document_metadata — path. Read JSON metadata and revision.
+set_document_metadata — path, metadata (object), only_if_revision optional. Full replacement.
 help — (no params) Base doctrine + short tool index.
 server_help — (no params) Text from config `server_help` path, or empty string.
 methods — (no params) This catalog.
@@ -500,6 +510,32 @@ impl TabulariumMcp {
             s.push_str(MCP_METHODS_CATALOG_FULL);
         }
         s
+    }
+
+    #[tool(description = "Read arbitrary JSON document metadata and shared revision.")]
+    async fn get_document_metadata(
+        &self,
+        Extension(parts): Extension<Parts>,
+        Parameters(p): Parameters<PathArg>,
+    ) -> Result<String, String> {
+        self.call_rpc_json(&parts, "get_document_metadata", json!({"path":p.path}))
+            .await
+    }
+
+    #[tool(
+        description = "Replace the document JSON metadata object; optional only_if_revision protects against concurrent edits. Metadata is lexically indexed."
+    )]
+    async fn set_document_metadata(
+        &self,
+        Extension(parts): Extension<Parts>,
+        Parameters(p): Parameters<MetadataArg>,
+    ) -> Result<String, String> {
+        self.call_rpc_json(
+            &parts,
+            "set_document_metadata",
+            json!({"path":p.path,"metadata":p.metadata,"only_if_revision":p.only_if_revision}),
+        )
+        .await
     }
 
     #[tool(description = "Read full document body and metadata (JSON-RPC get_document).")]
@@ -1074,6 +1110,70 @@ mod search_option_tests {
     use bma_ts::Monotonic;
     use std::time::Duration;
     use tabularium::SqliteDatabase;
+
+    #[tokio::test]
+    async fn mcp_metadata_roundtrip_and_revision_conflict() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Arc::new(
+            SqliteDatabase::init(
+                format!("sqlite://{}", dir.path().join("source.db").display()),
+                dir.path().join("index"),
+                0,
+            )
+            .await
+            .unwrap(),
+        );
+        db.create_file_in_directory("/", "example", "body")
+            .await
+            .unwrap();
+        let mcp = TabulariumMcp::new(
+            AppState {
+                db,
+                wait_timeout: Duration::from_secs(1),
+                process_started_at: Monotonic::now(),
+                authenticate_api: false,
+                authenticate_mcp: false,
+                oidc: None,
+            },
+            Arc::from(""),
+            false,
+        );
+        let parts = || http::Request::new(()).into_parts().0;
+        let read = || {
+            Parameters(PathArg {
+                path: "/example".into(),
+            })
+        };
+        let value: Value = serde_json::from_str(
+            &mcp.get_document_metadata(Extension(parts()), read())
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        let revision = value["revision"].as_str().unwrap().to_string();
+        let write = || {
+            Parameters(MetadataArg {
+                path: "/example".into(),
+                metadata: json!({"tags":["test"]}),
+                only_if_revision: Some(revision.clone()),
+            })
+        };
+        mcp.set_document_metadata(Extension(parts()), write())
+            .await
+            .unwrap();
+        assert!(
+            mcp.set_document_metadata(Extension(parts()), write())
+                .await
+                .is_err()
+        );
+        let value: Value = serde_json::from_str(
+            &mcp.get_document_metadata(Extension(parts()), read())
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(value["metadata"], json!({"tags":["test"]}));
+    }
 
     #[tokio::test]
     async fn mcp_search_forwards_sort_time_bounds_and_validates_sort() {

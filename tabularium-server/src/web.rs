@@ -113,6 +113,10 @@ pub fn router(state: AppState) -> Router {
                 .patch(rest_patch_document)
                 .delete(rest_delete_any),
         )
+        .route(
+            "/api/metadata/{*rest}",
+            get(rest_get_metadata).put(rest_put_metadata),
+        )
         .route("/api/search", get(search_get).post(search_post))
         .route("/api/reindex", post(rest_reindex))
         .route("/ws", get(ws_upgrade))
@@ -412,6 +416,45 @@ async fn rest_mkdir(
     ))
 }
 
+async fn rest_get_metadata(
+    State(st): State<AppState>,
+    Path(rest): Path<String>,
+    headers: HeaderMap,
+) -> ApiResult<Response> {
+    let auth = api_resolve_auth(&st, &headers).await?;
+    let path = rest_to_canonical(&rest);
+    check_read(&auth, &path).map_err(ApiError)?;
+    let meta = st.db.document_ref_by_path(&path).await?;
+    let value = st.db.document_metadata(&path).await?;
+    Ok(Json(json!({"metadata":value, "revision":meta.revision()})).into_response())
+}
+
+#[derive(Deserialize)]
+struct MetadataWrite {
+    metadata: Value,
+    #[serde(default)]
+    only_if_revision: Option<String>,
+}
+
+async fn rest_put_metadata(
+    State(st): State<AppState>,
+    Path(rest): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<MetadataWrite>,
+) -> ApiResult<Response> {
+    let auth = api_resolve_auth(&st, &headers).await?;
+    let path = rest_to_canonical(&rest);
+    check_write(&auth, &path).map_err(ApiError)?;
+    if let Some(rev) = &body.only_if_revision {
+        uuid::Uuid::parse_str(rev).map_err(|e| ApiError(Error::InvalidInput(e.to_string())))?;
+    }
+    st.db
+        .set_document_metadata(&path, &body.metadata, body.only_if_revision.as_deref())
+        .await?;
+    let meta = st.db.document_ref_by_path(&path).await?;
+    Ok(Json(json!({"revision":meta.revision()})).into_response())
+}
+
 async fn get_or_list(
     State(st): State<AppState>,
     Path(rest): Path<String>,
@@ -438,6 +481,7 @@ async fn get_or_list(
                 "id": meta.id().raw(),
                 "path": meta.canonical_path(),
                 "content": body,
+                "metadata": st.db.document_metadata(meta.canonical_path()).await?,
                 "created_at": meta.created_at(),
                 "modified_at": meta.modified_at(),
                 "accessed_at": meta.accessed_at(),
@@ -1321,6 +1365,26 @@ pub(crate) async fn dispatch_app_rpc(
             st.db.cp(&src, &dst, recursive).await?;
             Ok(Value::Null)
         }
+        "get_document_metadata" => {
+            let path = rpc_path(&m, "path")?;
+            check_read(auth, &path).map_err(RpcAppError::Other)?;
+            let meta = st.db.document_ref_by_path(&path).await?;
+            let metadata = st.db.document_metadata(&path).await?;
+            Ok(json!({ "metadata": metadata, "revision": meta.revision() }))
+        }
+        "set_document_metadata" => {
+            let path = rpc_path(&m, "path")?;
+            check_write(auth, &path).map_err(RpcAppError::Other)?;
+            let value = m.get("metadata").ok_or_else(|| {
+                RpcAppError::Other(Error::InvalidInput("missing metadata".into()))
+            })?;
+            let only = get_optional_uuid_str(&m, "only_if_revision")?;
+            st.db
+                .set_document_metadata(&path, value, only.as_deref())
+                .await?;
+            let meta = st.db.document_ref_by_path(&path).await?;
+            Ok(json!({ "revision": meta.revision() }))
+        }
         "get_document" | "cat" => {
             let path = rpc_path(&m, "path")?;
             check_read(auth, &path).map_err(RpcAppError::Other)?;
@@ -1330,6 +1394,7 @@ pub(crate) async fn dispatch_app_rpc(
                 "id": meta.id().raw(),
                 "path": meta.canonical_path(),
                 "content": body,
+                "metadata": st.db.document_metadata(meta.canonical_path()).await?,
                 "created_at": meta.created_at(),
                 "modified_at": meta.modified_at(),
                 "accessed_at": meta.accessed_at(),
