@@ -15,7 +15,7 @@ UI, CLI, REST, JSON-RPC, MCP, or the Rust library.
 - Stores documents in SQLite with Tantivy-backed search.
 - Lets you browse, edit, append, search, and export documents as a tree.
 - Serves the same data through an embedded web UI, HTTP APIs, MCP, and `tb`.
-- Supports meeting and chat-style document workflows for humans and machine spirits alike.
+- Supports meeting and chat-style document workflows for people and AI agents alike.
 
 ## Workspace
 
@@ -112,3 +112,11 @@ regular data backups, and monitoring for unusual activity.
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
+
+
+## Semantic and hybrid search
+
+Search and reindex accept `kind`: `lexical`, `semantic`, or `hybrid` (default).
+Optional `[semantic]` config enables OpenAI-compatible embeddings, including custom HTTP headers.
+The semantic sidecar is rebuilt without migrating the document database.
+See [semantic search](docs/semantic-search.md) for configuration, API status envelopes, upgrade steps, and fallback behavior.

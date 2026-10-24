@@ -1,6 +1,6 @@
 """Selenium coverage for meetings/webui.search — Ferrum test manifest T01–T20.
 
-Prerequisites: TABULARIUM_TEST_URL pointing at http://10.90.1.122:<port> (AGENTS.md).
+Prerequisites: TABULARIUM_TEST_URL pointing at http://10.90.1.102:<port> (AGENTS.md).
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ import re
 import time
 import uuid
 from typing import Any
-from urllib.parse import quote, unquote, urlparse
+from urllib.parse import quote, unquote, urlparse, parse_qs
 
 import pytest
 import requests
@@ -109,7 +109,10 @@ def _focus_search_list(driver):
             (By.CSS_SELECTOR, "[data-testid='search-mode'] ul[role='listbox']"),
         ),
     )
-    ul.click()
+    # Clicking the list center can activate a result and focus its preview.
+    # These cases test keyboard handling on the list, not row activation.
+    driver.execute_script("arguments[0].focus()", ul)
+    _wait(driver).until(lambda d: d.switch_to.active_element == ul)
 
 
 def _wait_search_mode(driver, present: bool = True, timeout=20):
@@ -727,3 +730,65 @@ def test_ws_T20_search_root_nav_goes_to_repository_root(
     _wait_search_mode(d, present=False)
     assert _logical_dir_from_url(d.current_url) == "/"
 
+
+
+def test_search_kind_selector_refetches_and_preserves_scope(
+    selenium_driver, tabularium_base_url, seed_search_hierarchy,
+):
+    d = selenium_driver
+    seed = seed_search_hierarchy
+    d.get(_entries_url(tabularium_base_url, seed["root"], "inner"))
+    _wait_app_ready(d)
+    selector = Select(d.find_element(By.CSS_SELECTOR, "[aria-label='Search kind']"))
+    assert selector.first_selected_option.get_attribute("value") == "hybrid"
+    assert [o.get_attribute("value") for o in selector.options] == ["hybrid", "semantic", "lexical"]
+    _fire_search(d, seed["tok_sub"])
+    _wait_for_search_hits(d)
+
+    def last_request(kind, local):
+        urls = d.execute_script("return performance.getEntriesByType('resource').map(e => e.name).filter(n => n.includes('/api/search?'))")
+        if not urls:
+            return False
+        params = parse_qs(urlparse(urls[-1]).query)
+        return params.get("kind") == [kind] and (("dir" in params) == local)
+
+    _wait(d).until(lambda _: last_request("hybrid", True))
+    selector.select_by_value("lexical")
+    _wait(d).until(lambda _: last_request("lexical", True))
+    _wait_for_search_hits(d)
+    _set_search_scope(d, "global")
+    _wait(d).until(lambda _: last_request("lexical", False))
+    selector.select_by_value("semantic")
+    _wait(d).until(lambda _: last_request("semantic", False))
+    selector.select_by_value("hybrid")
+    _wait(d).until(lambda _: last_request("hybrid", False))
+    _wait_for_search_hits(d)
+    d.set_window_size(390, 844)
+    assert d.execute_script("return document.documentElement.scrollWidth <= window.innerWidth")
+
+
+def test_search_order_and_time_controls_refetch(selenium_driver, tabularium_base_url, seed_search_hierarchy):
+    d = selenium_driver
+    seed = seed_search_hierarchy
+    d.get(_entries_url(tabularium_base_url, seed["root"], "inner"))
+    _wait_app_ready(d)
+    Select(d.find_element(By.CSS_SELECTOR, "[data-testid='search-kind']")).select_by_value("lexical")
+    _fire_search(d, seed["tok_sub"])
+    _wait_for_search_hits(d)
+    Select(d.find_element(By.CSS_SELECTOR, "[data-testid='search-sort']")).select_by_value("modified_desc")
+    def last_params():
+        urls = d.execute_script("return performance.getEntriesByType('resource').map(e => e.name).filter(n => n.includes('/api/search?'))")
+        return parse_qs(urlparse(urls[-1]).query) if urls else {}
+    _wait(d).until(lambda _: last_params().get("sort") == ["modified_desc"])
+    field = d.find_element(By.CSS_SELECTOR, "[data-testid='search-modified-after']")
+    d.execute_script("""
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+        setter.call(arguments[0], '2020-01-01T00:00');
+        arguments[0].dispatchEvent(new Event('input', {bubbles:true}));
+    """, field)
+    _wait(d).until(lambda _: "modified_after" in last_params())
+    assert int(last_params()["modified_after"][0]) > 10**18
+    assert "dir" in last_params()
+    _wait_for_search_hits(d)
+    d.set_window_size(390, 844)
+    assert d.execute_script("return document.documentElement.scrollWidth <= window.innerWidth")

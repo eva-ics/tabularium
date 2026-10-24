@@ -76,7 +76,7 @@ set-version version:
 check: build-ui
     cargo check --workspace
 
-# Library only: storage stack without `reqwest` (matches server dependency shape).
+# Library only: storage stack with the optional embeddings HTTP client (matches server dependency shape).
 check-tabularium-db:
     cargo check -p tabularium --no-default-features --features db
 
@@ -84,7 +84,7 @@ check-tabularium-db:
 check-tabularium-core:
     cargo check -p tabularium --no-default-features
 
-# Release-mode tests (integration rite / CI parity).
+# Release-mode tests (integration workflow / CI parity).
 test: build-ui
     cargo test --workspace --release
 
@@ -99,7 +99,7 @@ test-ci: build-ui
 clippy: build-ui
     clippy
 
-# Remote integration rite: rsync → /opt/${CI_PROJECT:-tabularium}, release build, ephemeral server (logs in /tmp), pytest, `just test`, trap kills server.
+# Remote integration workflow: rsync → /opt/${CI_PROJECT:-tabularium}, release build, ephemeral server (logs in /tmp), pytest, `just test`, trap kills server.
 # Override: CI_HOST CI_PROJECT CI_LISTEN. See scripts/ci-test.sh.
 ci-test:
     bash scripts/ci-test.sh

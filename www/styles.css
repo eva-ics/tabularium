@@ -388,7 +388,7 @@ section h2 {
   margin: 0 0 0.75rem;
 }
 
-/* Pre blocks: wrap for narrow viewports — the God-Emperor abhors horizontal scroll heresy */
+/* Pre blocks: wrap for narrow viewports to avoid horizontal scrolling */
 pre {
   margin: 0;
   padding: 1rem 1.1rem;

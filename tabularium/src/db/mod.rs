@@ -4,6 +4,10 @@ mod entry_kind;
 mod meta;
 mod ops;
 mod search_index;
+mod semantic;
+mod semantic_ops;
+pub use semantic::SemanticConfig;
+pub use semantic_ops::SearchReport;
 mod sqlite;
 mod storage;
 mod time_parse;
@@ -77,6 +81,7 @@ pub enum DocumentWaitStatus {
 pub struct Database<S: Storage> {
     storage: S,
     search: SearchIndex,
+    semantic: Option<Arc<semantic::SemanticIndex>>,
     cache: Cache<EntryId, String>,
     cache_active: bool,
     doc_wait: Arc<DashMap<EntryId, wait_cell::Sender<u64>>>,
@@ -112,6 +117,7 @@ impl SqliteDatabase {
         Ok(Database {
             storage,
             search,
+            semantic: None,
             cache,
             cache_active: cache_size > 0,
             doc_wait: Arc::new(DashMap::new()),
@@ -177,14 +183,20 @@ impl<S: Storage> Database<S> {
             .storage
             .files_for_search_reindex(Some(directory_path))
             .await?;
-        self.search.upsert_batch(&rows).await
+        self.search.upsert_batch(&rows).await?;
+        for (id, _, _, _, _) in rows {
+            self.queue_semantic(id).await;
+        }
+        Ok(())
     }
 
     async fn reindex_file_in_search(&self, file_id: EntryId) -> Result<()> {
         let (dp, name, desc, content) = self.storage.file_search_index_fields(file_id).await?;
         self.search
             .upsert_file(file_id, &dp, &name, &desc, &content)
-            .await
+            .await?;
+        self.queue_semantic(file_id).await;
+        Ok(())
     }
 
     fn bump_doc_wait(&self, file_id: EntryId) {
@@ -263,6 +275,41 @@ impl<S: Storage> Database<S> {
             .await
     }
 
+    /// Metadata keys and values participate in lexical search, but not semantic embeddings.
+    pub async fn document_metadata(&self, path: &str) -> Result<serde_json::Value> {
+        let id = self.resolve_file_path(path).await?;
+        let value = self.storage.file_metadata(id).await?;
+        self.storage.touch(id).await?;
+        Ok(value)
+    }
+
+    /// Full replacement with optional optimistic concurrency, same revision as the body.
+    pub async fn set_document_metadata(
+        &self,
+        path: &str,
+        metadata: &serde_json::Value,
+        expected_revision: Option<&str>,
+    ) -> Result<()> {
+        if !metadata.is_object() {
+            return Err(Error::InvalidInput("metadata must be a JSON object".into()));
+        }
+        let raw =
+            serde_json::to_string(metadata).map_err(|e| Error::InvalidInput(e.to_string()))?;
+        if raw.len() > 65536 {
+            return Err(Error::InvalidInput(
+                "metadata exceeds 65536 UTF-8 bytes".into(),
+            ));
+        }
+        let id = self.resolve_file_path(path).await?;
+        self.storage
+            .set_file_metadata(id, &raw, expected_revision)
+            .await?;
+        self.cache.invalidate(&id).await;
+        self.reindex_file_in_search(id).await?;
+        self.bump_doc_wait(id);
+        Ok(())
+    }
+
     #[instrument(skip(self), fields(path = %path.as_ref()), err(Debug))]
     pub async fn entry_description(&self, path: impl AsRef<str> + Send) -> Result<Option<String>> {
         let path = path.as_ref();
@@ -300,6 +347,7 @@ impl<S: Storage> Database<S> {
         self.storage.delete_directory_recursive(path).await?;
         for (id, _, _, _, _) in rows {
             self.search.delete_file(id).await?;
+            self.queue_semantic(id).await;
             self.cache.invalidate(&id).await;
             self.doc_wait.remove(&id);
         }
@@ -373,6 +421,7 @@ impl<S: Storage> Database<S> {
     pub async fn delete_document(&self, file_id: EntryId) -> Result<()> {
         self.storage.delete_file(file_id).await?;
         self.search.delete_file(file_id).await?;
+        self.queue_semantic(file_id).await;
         self.cache.invalidate(&file_id).await;
         self.doc_wait.remove(&file_id);
         self.doc_append_locks.remove(&file_id);
@@ -628,6 +677,52 @@ mod deep_path_tests;
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn metadata_search_revision_validation_and_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let uri = format!("sqlite://{}", dir.path().join("meta.db").display());
+        let db = super::SqliteDatabase::init(&uri, dir.path().join("idx"), 8)
+            .await
+            .unwrap();
+        let id = db
+            .create_file_in_directory("/", "one.md", "original body")
+            .await
+            .unwrap();
+        let before = db.get_document_meta(id).await.unwrap();
+        let value = serde_json::json!({"uniquelexicalkey":"metaneedle", "nested":{"number":42,"enabled":true},"tags":["one","two"]});
+        db.set_document_metadata("/one.md", &value, before.revision())
+            .await
+            .unwrap();
+        assert_eq!(db.document_metadata("/one.md").await.unwrap(), value);
+        assert_eq!(db.get_document(id).await.unwrap(), "original body");
+        assert_eq!(db.search("metaneedle", None).await.unwrap(), vec![id]);
+        assert_eq!(db.search("uniquelexicalkey", None).await.unwrap(), vec![id]);
+        assert!(matches!(
+            db.set_document_metadata("/one.md", &serde_json::json!({}), before.revision())
+                .await,
+            Err(crate::Error::RevisionMismatch(_))
+        ));
+        for bad in [
+            serde_json::json!([]),
+            serde_json::json!(null),
+            serde_json::json!({"large":"x".repeat(65536)}),
+        ] {
+            assert!(
+                db.set_document_metadata("/one.md", &bad, None)
+                    .await
+                    .is_err()
+            );
+        }
+        db.cp("/one.md", "/two.md", false).await.unwrap();
+        assert_eq!(db.document_metadata("/two.md").await.unwrap(), value);
+        db.reindex(None).await.unwrap();
+        assert_eq!(db.search("metaneedle", None).await.unwrap().len(), 2);
+        db.set_document_metadata("/one.md", &serde_json::json!({}), None)
+            .await
+            .unwrap();
+        assert!(!db.search("metaneedle", None).await.unwrap().contains(&id));
+    }
+
     use super::*;
 
     #[tokio::test]
@@ -1264,3 +1359,6 @@ mod tests {
         assert_eq!(st, DocumentWaitStatus::Changed);
     }
 }
+
+#[cfg(test)]
+mod semantic_tests;

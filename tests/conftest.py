@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 import pytest
 
 # Selenium Web UI tests MUST target this host only (Enginseer doctrine — no loopback).
-SELENIUM_TEST_HOST = "10.90.1.122"
+SELENIUM_TEST_HOST = "10.90.1.102"
 
 
 def pytest_configure(config) -> None:

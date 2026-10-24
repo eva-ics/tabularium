@@ -9,7 +9,7 @@ workers = 1
 # Long-poll `wait` RPC / `?wait=true` max wait (seconds)
 timeout = 3600
 # When true, REST + POST /rpc require `X-Auth-Key` matching an `access_keys` row (stage-1 ACL).
-# Recovery if locked out: set back to false, restart, fix ACLs — see meeting docs / operator scroll.
+# Recovery if locked out: set back to false, restart, fix ACLs — see meeting docs / operator documentation.
 #authenticate = true
 
 # Optional `[oidc]` — signed assertion from upstream AAA/WAF, validated locally via JWKS (`key` required when this section exists). Canonical STC field set only.
@@ -45,3 +45,23 @@ authenticate = false
 # full = false
 # Optional path to deployment-specific help (read at startup).
 # server_help = "/path/to/server_help.md"
+
+# Optional semantic search. Omit this section for lexical-only operation.
+# Existing document databases need no migration. After enabling, run:
+#   tb reindex --kind semantic /
+# The default search/reindex kind is hybrid; lexical means Tantivy only.
+# [semantic]
+# base_url = "http://127.0.0.1:8011/v1"
+# model = "bge-m3"
+# model_revision = "pin-provider-model-version-here"
+# index_dir = "./data/tabularium.semantic.index" # default: sibling of server.index_dir
+# timeout = 30         # per embedding batch, seconds
+# search_timeout = 2   # semantic branch deadline, seconds
+# chunk_bytes = 768    # UTF-8 byte window, NOT a model token count
+# overlap_bytes = 96
+# batch_size = 8
+# query_prefix = ""    # e.g. "query: " for E5
+# document_prefix = "" # e.g. "passage: " for E5
+# [semantic.headers]
+# Authorization = "Bearer replace-with-your-key"
+# X-Custom-Header = "value"

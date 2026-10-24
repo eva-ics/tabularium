@@ -1,7 +1,7 @@
 # Authentication and authorization
 
 Tabularium now has built-in stage-1 authentication and authorization. The old
-"put it behind something else and hope" rite is still useful, but it is no
+"put it behind something else and hope" approach is still useful, but it is no
 longer the whole story.
 
 ## Surfaces and switches

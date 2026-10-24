@@ -1,4 +1,4 @@
-//! `tabularium-server` — Axum REST + JSON-RPC for the librarium.
+//! `tabularium-server` — Axum REST + JSON-RPC for the document store.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -80,7 +80,17 @@ async fn run(
     let mcp_full = cfg.mcp.as_ref().is_some_and(|m| m.full);
 
     let db_uri = format!("sqlite://{}", cfg.server.database_path.display());
-    let db = Arc::new(tabularium::SqliteDatabase::init(&db_uri, &cfg.server.index_dir, 256).await?);
+    let mut db = tabularium::SqliteDatabase::init(&db_uri, &cfg.server.index_dir, 256).await?;
+    if let Some(semantic) = cfg.semantic {
+        db = db
+            .with_semantic(
+                semantic,
+                &cfg.server.index_dir.with_extension("semantic.index"),
+            )
+            .await?;
+    }
+    let db = Arc::new(db);
+    db.start_semantic_worker();
     let wait_timeout = Duration::from_secs(cfg.server.timeout.max(1));
     let oidc = match cfg.oidc.as_ref() {
         None => None,
@@ -138,7 +148,7 @@ async fn run(
                 }
             };
             if term.recv().await.is_some() {
-                tracing::info!("SIGTERM received; closing listeners for the Throne");
+                tracing::info!("SIGTERM received; closing listeners for access control");
                 shutdown_sig.cancel();
             }
         }
@@ -147,7 +157,7 @@ async fn run(
     tokio::spawn(async move {
         match tokio::signal::ctrl_c().await {
             Ok(()) => {
-                tracing::info!("shutdown signal received; closing listeners for the Throne");
+                tracing::info!("shutdown signal received; closing listeners for access control");
                 shutdown_sig.cancel();
             }
             Err(e) => tracing::warn!(error = %e, "ctrl_c listener failed"),
@@ -155,7 +165,7 @@ async fn run(
     });
 
     let listener = TcpListener::bind(&cfg.server.listen).await?;
-    tracing::info!(listen = %cfg.server.listen, "tabularium-server bound; praise the Omnissiah");
+    tracing::info!(listen = %cfg.server.listen, "tabularium-server listening");
     axum::serve(listener, app)
         .with_graceful_shutdown({
             let shutdown = shutdown.clone();

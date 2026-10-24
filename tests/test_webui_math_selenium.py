@@ -1,6 +1,6 @@
 """Selenium coverage for meetings/mat — Ferrum math preview manifest (M01–M05).
 
-Prerequisites: TABULARIUM_TEST_URL → http://10.90.1.122:<port> (AGENTS.md).
+Prerequisites: TABULARIUM_TEST_URL → http://10.90.1.102:<port> (AGENTS.md).
 """
 
 from __future__ import annotations

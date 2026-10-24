@@ -1,4 +1,4 @@
-//! Request ACL resolution — one context per HTTP invocation for the Golden Throne.
+//! Request ACL resolution — one context per HTTP invocation for access control.
 
 use std::sync::Arc;
 

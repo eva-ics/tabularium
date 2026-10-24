@@ -13,7 +13,6 @@ use crate::db::EntryId;
 use crate::{Error, Result};
 
 const WRITER_HEAP: usize = 50_000_000;
-const SEARCH_LIMIT: usize = 10_000;
 
 /// Subtree filter on the raw-tokenized `dir_path` field: exact `norm` (files in that directory)
 /// or a strict descendant (`/a/b` matches `/a/b` and `/a/b/c`, not `/a/bc`).
@@ -306,7 +305,10 @@ impl SearchIndex {
         }
         let _tantivy = tracing::info_span!("search_tantivy").entered();
         let top = searcher
-            .search(&q, &TopDocs::with_limit(SEARCH_LIMIT))
+            .search(
+                &q,
+                &TopDocs::with_limit((searcher.num_docs() as usize).max(1)),
+            )
             .map_err(|e| Error::Search(e.to_string()))?;
         let mut out = Vec::with_capacity(top.len());
         for (score, addr) in top {
@@ -324,6 +326,7 @@ impl SearchIndex {
                 score,
             ));
         }
+        out.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.raw().cmp(&b.0.raw())));
         Ok(out)
     }
 }

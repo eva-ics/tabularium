@@ -1,6 +1,6 @@
 # AI Agents
 
-Tabularium can serve the same data through the web UI, CLI, REST, JSON-RPC, MCP, and the Rust library. For machine spirits, the sanctioned path is **MCP only** unless your overseer says otherwise.
+Tabularium can serve the same data through the web UI, CLI, REST, JSON-RPC, MCP, and the Rust library. For AI agents, use **MCP only** unless the operator explicitly authorizes another interface.
 
 Do not point agents at the REST API, the CLI, SQLite, or the Tantivy index when the task is "use Tabularium as shared knowledge base". Use the MCP server and the tools it exposes.
 
@@ -44,7 +44,7 @@ Point your MCP-capable agent client at the streamable HTTP endpoint above. The e
 }
 ```
 
-After connecting, the first useful rites are:
+After connecting, the first useful operations are:
 
 - `help` for doctrine and usage notes.
 - `methods` for the MCP tool catalog.
@@ -53,18 +53,18 @@ After connecting, the first useful rites are:
 
 ## Operating Rules
 
-- Treat Tabularium as the shared project memory: meetings, task scrolls, runbooks, and notes.
+- Treat Tabularium as the shared project memory: meetings, task documents, runbooks, and notes.
 - Use `list_directory` to walk the tree. There is no separate MCP `find` tool.
 - Use `search` for full-text lookup across the indexed corpus.
 - Use `grep` only when you already know the document and need regex matches inside that one file.
-- Use `get_document`, `head`, `tail`, or `slice` to read scrolls.
+- Use `get_document`, `head`, `tail`, or `slice` to read documents.
 - Use `put_document` to create or replace a document body.
 - Use `append_document` for plain body appends, not chat or meeting lines.
 - Use `say_document` for meetings and conversations so `from_id` is recorded in the appended markdown block. Do **not** embed the nickname into `content`; provide it via `from_id` only.
 
 ## Meetings And Group Work
 
-Meeting scrolls conventionally live at:
+Meeting documents conventionally live at:
 
 ```text
 /PROJECT/meetings/TOPIC
@@ -76,13 +76,13 @@ Recommended meeting flow:
 
 1. Create the meeting document once with `put_document` or `append_document`.
 2. Reply to the meeting with `say_document` and a stable `from_id` such as `Logis`, `Cogis`, or a human name.
-3. Re-read the scroll after updates and continue in the same document until consensus or redirect.
+3. Re-read the document after updates and continue in the same document until consensus or redirect.
 
-Task scroll conventions are project-local. Keep them under the project subtree and stay consistent with the team's established layout.
+Task document conventions are project-local. Keep them under the project subtree and stay consistent with the team's established layout.
 
 ## Minimal Example
 
-Create a meeting scroll:
+Create a meeting document:
 
 ```json
 {
@@ -118,3 +118,7 @@ Read back the updated meeting:
 ```
 
 In MCP tool terms, that sequence is: `put_document`, `say_document`, `search`, then `get_document`.
+
+## Compact, versioned search
+
+Use `search` with `limit: 10`, `max_output_bytes: 16384` and optional `kind`. Inspect `has_more`/`truncated` independently of engine status. Each hit carries exact source text, containing line range, revision and technical modification time. Follow with `slice` using the returned `expected_revision`; on `RevisionMismatch` search again. Dates do not establish whether a statement is current. See [search API details](rest-api.md#bounded-search).
