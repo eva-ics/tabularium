@@ -92,6 +92,63 @@ async fn mcp_search_emits_nested_spans() {
 }
 
 #[tokio::test]
+async fn mcp_params_and_bodies_stay_out_of_otel_export() {
+    let exporter = InMemorySpanExporterBuilder::new().build();
+    let provider = SdkTracerProvider::builder()
+        .with_simple_exporter(exporter.clone())
+        .build();
+    let tracer = provider.tracer("tabularium-test");
+    let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
+    let _guard = tracing_subscriber::registry()
+        .with(otel_layer)
+        .set_default();
+
+    let marker = "otel-secret-body-should-never-export-9f3c2a1b";
+    let (app, _dir) = seeded_app().await;
+    let mcp = TabulariumMcp::new(app, Arc::from(""), false);
+    mcp.invoke_rpc_for_test(
+        "put_document",
+        json!({
+            "path": "/notes/secret.md",
+            "content": marker,
+            "force": true,
+        }),
+    )
+    .await
+    .expect("put ok");
+    mcp.invoke_rpc_for_test("search", json!({ "query": marker }))
+        .await
+        .expect("search ok");
+
+    provider.force_flush().unwrap();
+    let spans = exporter.get_finished_spans().unwrap();
+    for span in &spans {
+        for kv in &span.attributes {
+            let hay = format!("{}={}", kv.key.as_str(), kv.value.as_str());
+            assert!(
+                !hay.contains(marker),
+                "span attribute leaked MCP payload: {hay} (span={})",
+                span.name
+            );
+        }
+        for event in span.events.iter() {
+            let name = event.name.as_ref();
+            assert!(
+                !name.contains(marker),
+                "span event name leaked MCP payload: {name}"
+            );
+            for kv in &event.attributes {
+                let hay = format!("{}={}", kv.key.as_str(), kv.value.as_str());
+                assert!(
+                    !hay.contains(marker),
+                    "span event attribute leaked MCP payload: {hay}"
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn mcp_tool_error_marks_span_error() {
     let exporter = InMemorySpanExporterBuilder::new().build();
     let provider = SdkTracerProvider::builder()

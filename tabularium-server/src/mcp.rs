@@ -203,20 +203,21 @@ impl TabulariumMcp {
             otel.status_code = field::Empty,
             error.type = field::Empty,
         );
+        // Log params before entering the OTLP span so bodies/queries stay on fmt only.
+        let mcp_full_only_tool = MCP_FULL_ONLY_TOOL_NAMES.contains(&method)
+            || MCP_FULL_ONLY_ACL_PSK_TOOL_NAMES.contains(&method);
+        info!(
+            target: "tabularium_server::rpc",
+            transport = "mcp",
+            mcp_full = self.mcp_full,
+            mcp_full_only_tool,
+            method = %method,
+            params = %crate::rpc_preview::format_rpc_params_preview(Some(&params)),
+            "RPC request"
+        );
         async {
             let _active = enter_active_tool(method);
             let started = Instant::now();
-            let mcp_full_only_tool = MCP_FULL_ONLY_TOOL_NAMES.contains(&method)
-                || MCP_FULL_ONLY_ACL_PSK_TOOL_NAMES.contains(&method);
-            info!(
-                target: "tabularium_server::rpc",
-                transport = "mcp",
-                mcp_full = self.mcp_full,
-                mcp_full_only_tool,
-                method = %method,
-                params = %crate::rpc_preview::format_rpc_params_preview(Some(&params)),
-                "RPC request"
-            );
             let auth: RequestAuth = if !self.app.authenticate_mcp {
                 RequestAuth::Disabled
             } else if method == "test" {

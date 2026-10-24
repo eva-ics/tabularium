@@ -58,7 +58,7 @@ impl Client {
         let mut builder = reqwest::Client::builder()
             .timeout(timeout)
             .default_headers(extra_headers.clone());
-        if std::env::var_os("TB_DANGER_ACCEPT_INVALID_CERTS").is_some() {
+        if danger_accept_invalid_certs_enabled() {
             builder = builder.danger_accept_invalid_certs(true);
         }
         let http = builder
@@ -1324,6 +1324,22 @@ impl DocumentBody {
     }
 }
 
+/// Same contract as `OTEL_SDK_DISABLED` in the server: only `1` / `true` (trimmed) enable the danger path.
+fn danger_accept_invalid_certs_enabled() -> bool {
+    danger_accept_invalid_certs_value(
+        std::env::var("TB_DANGER_ACCEPT_INVALID_CERTS")
+            .ok()
+            .as_deref(),
+    )
+}
+
+fn danger_accept_invalid_certs_value(raw: Option<&str>) -> bool {
+    matches!(
+        raw.map(str::trim).filter(|s| !s.is_empty()),
+        Some("true" | "1" | "TRUE" | "True")
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1331,5 +1347,17 @@ mod tests {
     #[test]
     fn client_init_accepts_https_base() {
         Client::init("https://127.0.0.1:9", Duration::from_secs(1)).unwrap();
+    }
+
+    #[test]
+    fn danger_accept_invalid_certs_reads_value_not_presence() {
+        assert!(!danger_accept_invalid_certs_value(None));
+        assert!(!danger_accept_invalid_certs_value(Some("")));
+        assert!(!danger_accept_invalid_certs_value(Some("   ")));
+        assert!(!danger_accept_invalid_certs_value(Some("false")));
+        assert!(!danger_accept_invalid_certs_value(Some("0")));
+        assert!(danger_accept_invalid_certs_value(Some("true")));
+        assert!(danger_accept_invalid_certs_value(Some("1")));
+        assert!(danger_accept_invalid_certs_value(Some(" TRUE ")));
     }
 }
