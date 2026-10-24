@@ -2030,10 +2030,11 @@ fn metadata_sidecar(path: &Path) -> std::path::PathBuf {
 
 fn read_metadata_file(path: &Path) -> Result<serde_json::Value, BoxErr> {
     let bytes = std::fs::read(path)?;
-    if bytes.len() > 65536 {
+    let value: serde_json::Value = serde_json::from_slice(&bytes)?;
+    // Size is the canonical JSON payload, not whitespace added by export/$EDITOR.
+    if serde_json::to_vec(&value)?.len() > 65536 {
         return Err("metadata exceeds 65536 UTF-8 bytes".into());
     }
-    let value: serde_json::Value = serde_json::from_slice(&bytes)?;
     if !value.is_object() {
         return Err("metadata must be a JSON object".into());
     }

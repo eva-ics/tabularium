@@ -84,3 +84,13 @@ def test_metadata_roundtrip_search_cli_and_validation(tmp_path):
     collision_export.mkdir()
     collision = subprocess.run([_tb_bin(), "-u", base, "export", "/" + destination, "-d", str(collision_export)], capture_output=True)
     assert collision.returncode != 0
+
+    # Pretty-printed sidecars can exceed the canonical JSON size limit due to whitespace.
+    large = {"tags": ["x"] * 9000}
+    explicit.write_text(json.dumps(large, separators=(",", ":")))
+    cli("meta", imported, "--import", str(explicit))
+    pretty_large = tmp_path / "large-pretty.json"
+    cli("meta", imported, "--export", str(pretty_large))
+    assert pretty_large.stat().st_size > 65536
+    cli("meta", imported, "--import", str(pretty_large))
+    assert json.loads(cli("meta", imported)) == large
