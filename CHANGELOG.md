@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 0.1.9 - 2026-10-27
+
+### Security
+
+- Refresh Web UI dependencies and lockfile to resolve npm audit findings.
+- Upgrade KaTeX to 0.19.1 across math-rendering dependencies and use the
+  patched React Router 7.18.5 for bmat as well as the application.
+
+### Maintenance
+
+- Move project, installation and Homebrew links to Velor; use the
+  `velortech/tabularium` Docker namespace and retire the standalone website.
+
+## 0.1.8 - 2026-10-27
+
 ### Added
 
 - Opt-in OTLP/HTTP protobuf traces and MCP/runtime metrics, with bounded shutdown

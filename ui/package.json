@@ -15,14 +15,14 @@
     "chart.js": "^4.5.1",
     "chartjs-plugin-datalabels": "^2.2.0",
     "highlight.js": "11.12.0",
-    "katex": "^0.16.45",
+    "katex": "^0.19.1",
     "mermaid": "^11.16.0",
     "lowlight": "3.3.0",
     "react": "^19.2.4",
     "react-chartjs-2": "^5.3.1",
     "react-dom": "^19.2.4",
     "react-markdown": "^10.1.0",
-    "react-router-dom": "^7.14.0",
+    "react-router-dom": "^7.18.5",
     "rehype-katex": "^7.0.1",
     "rehype-sanitize": "^6.0.0",
     "remark-gfm": "^4.0.1",
@@ -43,5 +43,11 @@
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.57.0",
     "vite": "^8.0.1"
+  },
+  "overrides": {
+    "katex": "$katex",
+    "bmat": {
+      "react-router-dom": "$react-router-dom"
+    }
   }
 }
