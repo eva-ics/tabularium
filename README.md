@@ -4,7 +4,7 @@
   <a href="https://docs.rs/tabularium"><img alt="docs.rs page" src="https://docs.rs/tabularium/badge.svg"></img></a>
 </h2>
 
-[Tabularium](https://tb.bma.ai) is an AI-oriented markdown document store with full-text
+[Tabularium](https://velortechnologies.com/tech/tabularium/) is an AI-oriented markdown document store with full-text
 search, a real directory tree, and several ways to work with the same data: web
 UI, CLI, REST, JSON-RPC, MCP, or the Rust library.
 
@@ -27,7 +27,7 @@ UI, CLI, REST, JSON-RPC, MCP, or the Rust library.
 ## Linux installation
 
 ```bash
-curl https://pub.bma.ai/apt/setup | sudo sh
+curl https://apt.velor.is/setup | sudo sh
 sudo apt-get install tabularium-server tabularium-cli
 ```
 

@@ -139,19 +139,3 @@ build-brew: build-ui
 
 brew-install: build-brew
     bash scripts/brew-install.sh
-
-# Static marketing site: upload everything under `www/` to GCS with canned ACL public-read.
-# Requires `gsutil` (Google Cloud SDK) and credentials with write access to the bucket.
-# Override bucket: `WWW_BUCKET=gs://other-bucket/prefix/ just pub-www`
-pub-www:
-    bash -ec '\
-      set -euo pipefail; \
-      BUCKET="${WWW_BUCKET:-gs://tb.bma.ai}"; \
-      BUCKET="${BUCKET%/}/"; \
-      command -v gsutil >/dev/null || { echo "pub-www: gsutil not on PATH (install Google Cloud SDK)" >&2; exit 1; }; \
-      [[ -d www ]] || { echo "pub-www: missing www/" >&2; exit 1; }; \
-      shopt -s dotglob nullglob; \
-      files=(www/*); \
-      ((${#files[@]})) || { echo "pub-www: www/ has no files" >&2; exit 1; }; \
-      gsutil -m cp -r -a public-read www/* "$BUCKET" \
-    '
