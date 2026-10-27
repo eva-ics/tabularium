@@ -16,7 +16,7 @@ docker run --rm \
   -p 3031:3031 \
   -v "$(pwd)/data:/var/tabularium/data" \
   -v "$(pwd)/spill:/var/tabularium/spill" \
-  bmauto/tabularium:latest
+  velortech/tabularium:latest
 ```
 
 This uses the baked-in default config at `/etc/tabularium/config.toml`.
@@ -102,7 +102,7 @@ Prerequisites:
 
 Defaults:
 
-- `IMAGE=bmauto/tabularium`
+- `IMAGE=velortech/tabularium`
 - `TAG` unset ⇒ pushes **both** `:<repo VERSION>` and `:latest`
 - `PLATFORMS=linux/amd64,linux/arm64`
 
@@ -110,6 +110,6 @@ Example:
 
 ```bash
 docker login
-IMAGE=bmauto/tabularium just pub-docker
+IMAGE=velortech/tabularium just pub-docker
 ```
 

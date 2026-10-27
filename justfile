@@ -33,7 +33,7 @@ prepare-docker:
 
 pub-docker: build-ui prepare-docker
     bash -ec ' \
-      IMAGE="${IMAGE:-bmauto/tabularium}"; \
+      IMAGE="${IMAGE:-velortech/tabularium}"; \
       VERSION="{{VERSION}}"; \
       TAG="${TAG:-}"; \
       PLATFORMS="${PLATFORMS:-linux/amd64,linux/arm64}"; \
