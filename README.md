@@ -8,7 +8,7 @@
 search, a real directory tree, and several ways to work with the same data: web
 UI, CLI, REST, JSON-RPC, MCP, or the Rust library.
 
-<img src="https://raw.githubusercontent.com/eva-ics/tabularium/main/ss/webui-d.png" width="800" />
+<img src="https://raw.githubusercontent.com/velortechnologies/tabularium/main/ss/webui-d.png" width="800" />
 
 ## What It Does
 
@@ -58,7 +58,7 @@ just tb search tabularium
 
 ```bash
 # add tap
-brew tap eva-ics/tabularium https://github.com/eva-ics/tabularium
+brew tap velortechnologies/tabularium https://github.com/velortechnologies/tabularium
 # install
 brew install tabularium
 ```

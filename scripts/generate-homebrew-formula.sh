@@ -11,11 +11,11 @@ LINUX_TARGET=""
 LINUX_SUMS=""
 CONFIG_FILE="$ROOT/config.toml.example"
 OUT=""
-GITHUB_REPO="${GITHUB_REPOSITORY:-eva-ics/tabularium}"
+GITHUB_REPO="${GITHUB_REPOSITORY:-velortechnologies/tabularium}"
 
 usage() {
   echo "Usage: $0 --tag vX.Y.Z --mac-target TRIPLE --mac-sums PATH --linux-target TRIPLE --linux-sums PATH [--config PATH] --out PATH"
-  echo "  Environment: GITHUB_REPOSITORY=owner/repo (default: eva-ics/tabularium)"
+  echo "  Environment: GITHUB_REPOSITORY=owner/repo (default: velortechnologies/tabularium)"
   exit 1
 }
 

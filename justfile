@@ -120,11 +120,11 @@ deb: deb-amd64 deb-arm64
 
 # Publish built .debs into local apt repo (~/src/apt/repo); requires reprepro + prior `just deb`.
 pub-deb:
-    cd ~/src/apt/repo && reprepro includedeb stable ~/src/tabularium/make-deb/dist/tabularium-cli_{{ VERSION }}_arm64.deb
-    cd ~/src/apt/repo && reprepro includedeb stable ~/src/tabularium/make-deb/dist/tabularium-server_{{ VERSION }}_arm64.deb
-    cd ~/src/apt/repo && reprepro includedeb stable ~/src/tabularium/make-deb/dist/tabularium-cli_{{ VERSION }}_amd64.deb
-    cd ~/src/apt/repo && reprepro includedeb stable ~/src/tabularium/make-deb/dist/tabularium-server_{{ VERSION }}_amd64.deb
-    cd ~/src/apt/repo && just pub
+    cd ~/src/velor-apt/repo && reprepro includedeb stable ~/src/tabularium/make-deb/dist/tabularium-cli_{{ VERSION }}_arm64.deb
+    cd ~/src/velor-apt/repo && reprepro includedeb stable ~/src/tabularium/make-deb/dist/tabularium-server_{{ VERSION }}_arm64.deb
+    cd ~/src/velor-apt/repo && reprepro includedeb stable ~/src/tabularium/make-deb/dist/tabularium-cli_{{ VERSION }}_amd64.deb
+    cd ~/src/velor-apt/repo && reprepro includedeb stable ~/src/tabularium/make-deb/dist/tabularium-server_{{ VERSION }}_amd64.deb
+    cd ~/src/velor-apt/repo && just pub
 
 # On x86_64 Linux: same artifacts without Docker/cross.
 deb-native-amd64: build-ui

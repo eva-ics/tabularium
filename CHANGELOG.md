@@ -5,17 +5,17 @@
 ### Added
 
 - Opt-in OTLP/HTTP protobuf traces and MCP/runtime metrics, with bounded shutdown
-  and RPC parameter previews excluded from exported span events ([#7](https://github.com/eva-ics/tabularium/pull/7)).
-- Mermaid diagrams in document and chat previews ([#7](https://github.com/eva-ics/tabularium/pull/7)).
+  and RPC parameter previews excluded from exported span events ([#7](https://github.com/velortechnologies/tabularium/pull/7)).
+- Mermaid diagrams in document and chat previews ([#7](https://github.com/velortechnologies/tabularium/pull/7)).
 - Adds optional `[anonymous]` path ACL: when auth is enabled and credentials are
   absent, requests use a configured non-admin allow/deny principal. Present but
   invalid PSK/OIDC credentials still fail closed. Web UI opens the public view
   without a key and offers Login / Logout around PSK sessions
-  ([#7](https://github.com/eva-ics/tabularium/pull/7)).
+  ([#7](https://github.com/velortechnologies/tabularium/pull/7)).
 - Web UI maps human librarium URLs (`/projects/…/doc.md`) to the entries
   browser instead of sending unknown paths to the library root; file/directory
   routing uses the server entry kind, including extensionless files and dotted
-  directory names ([#6](https://github.com/eva-ics/tabularium/pull/6)).
+  directory names ([#6](https://github.com/velortechnologies/tabularium/pull/6)).
 - Optional OpenAI-compatible embeddings with custom headers and a rebuildable
   semantic sidecar; lexical, semantic and hybrid search/reindex modes across
   REST, JSON-RPC, MCP, CLI and Web UI.

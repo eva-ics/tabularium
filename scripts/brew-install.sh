@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-tap="eva-ics/tabularium"
+tap="velortechnologies/tabularium"
 tap_repo="$(brew --repository "$tap" 2>/dev/null || true)"
 tmp_dir="$(mktemp -d)"
 tar_path="$tmp_dir/tabularium.tar.gz"
